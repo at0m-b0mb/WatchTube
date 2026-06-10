@@ -1,0 +1,36 @@
+# XcodeGen spec — generates WatchTube.xcodeproj from this file.
+# Regenerate any time with:  xcodegen generate
+#
+# This is a single-target, standalone watchOS app (no iPhone companion required).
+name: WatchTube
+options:
+  bundleIdPrefix: com.at0m.watchtube
+  createIntermediateGroups: true
+  deploymentTarget:
+    watchOS: "10.0"
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"            # Swift 5 language mode = fewer strict-concurrency speed bumps
+    # DEVELOPMENT_TEAM: ABCDE12345  # <- set your Apple Developer Team ID here, or pick it in Xcode > Signing
+    CODE_SIGN_STYLE: Automatic
+    GENERATE_INFOPLIST_FILE: NO
+
+targets:
+  WatchTube:
+    type: application
+    platform: watchOS
+    sources:
+      - App
+      - Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.at0m.watchtube.watchkitapp
+        INFOPLIST_FILE: App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Standalone watch app: runs without a paired iPhone app.
+        WATCHOS_DEPLOYMENT_TARGET: "10.0"
+        TARGETED_DEVICE_FAMILY: "4"   # 4 = Apple Watch
