@@ -50,19 +50,36 @@ struct InnerTubeClient {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
 
-        let context: [String: Any] = [
-            "client": ["clientName": "WEB", "clientVersion": webClientVersion,
-                       "hl": language, "gl": region]
-        ]
         let data = try await post(path: "search",
                                   apiKey: Self.webKey,
                                   userAgent: webUserAgent,
-                                  body: ["context": context, "query": trimmed])
+                                  body: ["context": webContext, "query": trimmed])
+        let videos = try parseVideos(from: data)
+        if videos.isEmpty { throw APIError.empty }
+        return videos
+    }
 
+    /// Home/Trending feed (browse `FEtrending`). Best-effort — callers should
+    /// fall back to a default search if this comes back empty or gated.
+    func trending() async throws -> [Video] {
+        let data = try await post(path: "browse",
+                                  apiKey: Self.webKey,
+                                  userAgent: webUserAgent,
+                                  body: ["context": webContext, "browseId": "FEtrending"])
+        let videos = try parseVideos(from: data)
+        if videos.isEmpty { throw APIError.empty }
+        return videos
+    }
+
+    private var webContext: [String: Any] {
+        ["client": ["clientName": "WEB", "clientVersion": webClientVersion,
+                    "hl": language, "gl": region]]
+    }
+
+    private func parseVideos(from data: Data) throws -> [Video] {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw APIError.decoding("search root")
+            throw APIError.decoding("response root")
         }
-
         var renderers: [[String: Any]] = []
         collectVideoRenderers(in: root, into: &renderers)
 
@@ -73,7 +90,6 @@ struct InnerTubeClient {
             seen.insert(video.id)
             videos.append(video)
         }
-        if videos.isEmpty { throw APIError.empty }
         return videos
     }
 
@@ -227,8 +243,10 @@ struct InnerTubeClient {
 
     private func collectVideoRenderers(in node: Any, into result: inout [[String: Any]]) {
         if let dict = node as? [String: Any] {
-            if let renderer = dict["videoRenderer"] as? [String: Any] {
-                result.append(renderer)
+            for key in ["videoRenderer", "gridVideoRenderer", "compactVideoRenderer"] {
+                if let renderer = dict[key] as? [String: Any] {
+                    result.append(renderer)
+                }
             }
             for value in dict.values {
                 collectVideoRenderers(in: value, into: &result)

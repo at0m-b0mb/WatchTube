@@ -1,38 +1,54 @@
 import SwiftUI
 
-/// One row in the search results list: thumbnail + title + channel/duration.
+/// One row in a video list: thumbnail with a duration badge, title, channel,
+/// and a heart if it's a favorite.
 struct VideoRowView: View {
     let video: Video
+    @Environment(LibraryStore.self) private var library
 
     var body: some View {
         HStack(spacing: 8) {
-            AsyncImage(url: video.thumbnailURL) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().aspectRatio(contentMode: .fill)
-                case .failure:
-                    placeholder(systemImage: "play.slash")
-                default:
-                    placeholder(systemImage: "photo")
+            ZStack(alignment: .bottomTrailing) {
+                AsyncImage(url: video.thumbnailURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    case .failure:
+                        placeholder(systemImage: "play.slash")
+                    default:
+                        placeholder(systemImage: "photo")
+                    }
+                }
+                .frame(width: 62, height: 40)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                if let length = video.lengthText {
+                    Text(length)
+                        .font(.system(size: 9, weight: .semibold))
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 1)
+                        .background(.black.opacity(0.75))
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .padding(2)
                 }
             }
-            .frame(width: 56, height: 36)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(video.title)
                     .font(.caption)
                     .lineLimit(2)
-                HStack(spacing: 4) {
-                    Text(video.channelTitle)
-                        .lineLimit(1)
-                    if let length = video.lengthText {
-                        Spacer(minLength: 2)
-                        Text(length)
-                    }
-                }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                Text(video.channelTitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            if library.isFavorite(video) {
+                Spacer(minLength: 0)
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.red)
             }
         }
         .padding(.vertical, 2)

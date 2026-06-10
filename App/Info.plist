@@ -21,6 +21,10 @@
 	<key>WKApplication</key>
 	<true/>
 
+	<!-- Watch-only app with no paired iPhone companion. Required for install. -->
+	<key>WKWatchOnly</key>
+	<true/>
+
 	<!-- Security: we keep App Transport Security fully ON (no exceptions).
 	     Every endpoint we touch (youtubei.googleapis.com, *.googlevideo.com)
 	     is HTTPS, so no ATS relaxation is needed. -->

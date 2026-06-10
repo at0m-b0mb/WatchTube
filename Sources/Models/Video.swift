@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Kept deliberately small — the watch screen only needs a thumbnail,
 /// a title, the channel name, and an optional duration label.
-struct Video: Identifiable, Hashable {
+struct Video: Identifiable, Hashable, Codable {
     let id: String              // the YouTube videoId, e.g. "dQw4w9WgXcQ"
     let title: String
     let channelTitle: String

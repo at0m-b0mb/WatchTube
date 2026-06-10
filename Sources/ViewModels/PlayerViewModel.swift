@@ -3,9 +3,6 @@ import AVFoundation
 import Observation
 
 /// Resolves a video's playable stream and owns the `AVPlayer`.
-///
-/// The view watches `phase`: it shows a spinner while resolving, the player
-/// once a stream URL is ready, or a readable message if something failed.
 @MainActor
 @Observable
 final class PlayerViewModel {
@@ -17,8 +14,8 @@ final class PlayerViewModel {
 
     private(set) var phase: Phase = .loading
     private(set) var title: String
+    let video: Video
 
-    @ObservationIgnored private let video: Video
     @ObservationIgnored private var hasStarted = false
 
     init(video: Video) {
@@ -26,13 +23,15 @@ final class PlayerViewModel {
         self.title = video.title
     }
 
-    /// Safe to call from `.onAppear` — only resolves once.
     func loadIfNeeded() {
         guard !hasStarted else { return }
         hasStarted = true
-        Task { [weak self] in
-            await self?.resolveAndPlay()
-        }
+        Task { await resolveAndPlay() }
+    }
+
+    func retry() {
+        phase = .loading
+        Task { await resolveAndPlay() }
     }
 
     private func resolveAndPlay() async {
@@ -41,17 +40,21 @@ final class PlayerViewModel {
             let resolution = try await AppClient.make().resolveStream(videoId: video.id)
             if !resolution.title.isEmpty { title = resolution.title }
 
-            let player = AVPlayer(url: resolution.url)
-            player.automaticallyWaitsToMinimizeStalling = true   // smoother on cellular
+            let item = AVPlayerItem(url: resolution.url)
+            if UserDefaults.standard.bool(forKey: "dataSaver") {
+                item.preferredPeakBitRate = 900_000   // ~0.9 Mbps cap for cellular/battery
+            }
+            let player = AVPlayer(playerItem: item)
+            player.automaticallyWaitsToMinimizeStalling = true
             phase = .ready(player)
             player.play()
+            Haptics.success()
         } catch {
             phase = .failed((error as? APIError)?.errorDescription ?? error.localizedDescription)
+            Haptics.warn()
         }
     }
 
-    /// Routes audio for long-form video so it plays through the watch speaker or
-    /// paired AirPods. Without an active playback session, watchOS stays silent.
     private func configureAudioSession() {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .moviePlayback)
