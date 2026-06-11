@@ -50,14 +50,9 @@ private struct ShortPage: View {
 
     var body: some View {
         ZStack {
-            // Vertical poster backdrop (always present; covers load + failure).
-            AsyncImage(url: video.thumbnailURL) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                Color.black
-            }
-            .overlay(Color.black.opacity(player == nil ? 0.4 : 0))
-            .ignoresSafeArea()
+            ThumbnailView(url: video.thumbnailURL)
+                .overlay(Color.black.opacity(player == nil ? 0.4 : 0))
+                .ignoresSafeArea()
 
             if let player {
                 VideoPlayer(player: player)

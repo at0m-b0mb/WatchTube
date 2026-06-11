@@ -434,31 +434,68 @@ struct InnerTubeClient {
             ?? text(renderer["longBylineText"])
             ?? text(renderer["shortBylineText"])
             ?? ""
+        let views = text(renderer["shortViewCountText"]) ?? text(renderer["viewCountText"])
         return Video(
             id: id,
             title: title,
             channelTitle: channel,
-            thumbnailURL: thumbnailURL(in: renderer) ?? Video.thumbnailURL(forVideoId: id),
+            thumbnailURL: Video.thumbnailURL(forVideoId: id),
             lengthText: text(renderer["lengthText"]),
-            channelId: channelId(in: renderer)
+            channelId: channelId(in: renderer),
+            viewCount: views
         )
     }
 
-    /// Modern "lockup" card (related rail, some search results). Carries a
-    /// `contentId` (videoId) and a nested title; we synthesize the thumbnail
-    /// from the id since the layout's image block is fiddly and often absent.
     private func mapLockup(_ vm: [String: Any]) -> Video? {
         guard (vm["contentType"] as? String) == "LOCKUP_CONTENT_TYPE_VIDEO",
               let id = vm["contentId"] as? String else { return nil }
         let metadata = (vm["metadata"] as? [String: Any])?["lockupMetadataViewModel"] as? [String: Any]
         let title = (metadata?["title"] as? [String: Any])?["content"] as? String ?? "Untitled"
+
+        let thumb = Video.thumbnailURL(forVideoId: id)
+        let (channel, views) = lockupMetadataTexts(metadata)
+        let duration = lockupDuration(vm)
+
         return Video(
             id: id,
             title: title,
-            channelTitle: "",
-            thumbnailURL: Video.thumbnailURL(forVideoId: id),
-            lengthText: nil
+            channelTitle: channel,
+            thumbnailURL: thumb,
+            lengthText: duration,
+            viewCount: views
         )
+    }
+
+    private func lockupMetadataTexts(_ metadata: [String: Any]?) -> (channel: String, views: String?) {
+        guard let meta = metadata?["metadata"] as? [String: Any],
+              let content = meta["contentMetadataViewModel"] as? [String: Any],
+              let rows = content["metadataRows"] as? [[String: Any]] else { return ("", nil) }
+        var channel = ""
+        var views: String?
+        for row in rows {
+            guard let parts = row["metadataParts"] as? [[String: Any]] else { continue }
+            for part in parts {
+                guard let t = (part["text"] as? [String: Any])?["content"] as? String else { continue }
+                if channel.isEmpty { channel = t }
+                else if views == nil, t.lowercased().contains("view") { views = t }
+            }
+        }
+        return (channel, views)
+    }
+
+    private func lockupDuration(_ vm: [String: Any]) -> String? {
+        guard let contentImage = vm["contentImage"] as? [String: Any] else { return nil }
+        func findBadge(_ node: Any) -> String? {
+            if let dict = node as? [String: Any] {
+                if let badge = dict["thumbnailBadgeViewModel"] as? [String: Any],
+                   let t = badge["text"] as? String, t.contains(":") { return t }
+                for v in dict.values { if let r = findBadge(v) { return r } }
+            } else if let arr = node as? [Any] {
+                for v in arr { if let r = findBadge(v) { return r } }
+            }
+            return nil
+        }
+        return findBadge(contentImage)
     }
 
     /// A Short card. The videoId lives under the reel-watch endpoint; the title
@@ -509,14 +546,6 @@ struct InnerTubeClient {
             }
         }
         return nil
-    }
-
-    private func thumbnailURL(in renderer: [String: Any]) -> URL? {
-        guard let thumbnail = renderer["thumbnail"] as? [String: Any],
-              let thumbnails = thumbnail["thumbnails"] as? [[String: Any]],
-              let best = thumbnails.last,
-              let urlString = best["url"] as? String else { return nil }
-        return URL(string: urlString)
     }
 
     /// The watch screen tops out well under 480p, so "best" means the sharpest

@@ -14,7 +14,7 @@ struct AccountFeedView: View {
         List {
             Section {
                 if model.isLoading && model.videos.isEmpty {
-                    LoadingRow()
+                    ForEach(0..<3, id: \.self) { _ in SkeletonRow() }
                 } else if let error = model.errorMessage, model.videos.isEmpty {
                     EmptyStateRow(icon: "exclamationmark.icloud", text: error)
                 } else {

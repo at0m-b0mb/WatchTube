@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// Search tab: a field with live autocomplete, a prominent go button, results,
-/// and tappable recent searches.
 struct SearchView: View {
     @Environment(LibraryStore.self) private var library
     @State private var model = SearchViewModel()
@@ -25,9 +23,8 @@ struct SearchView: View {
                 .disabled(model.query.trimmingCharacters(in: .whitespaces).isEmpty)
             }
 
-            // Live autocomplete — shown while typing, before results land.
             if !model.suggestions.isEmpty && model.results.isEmpty && !model.isLoading {
-                Section("Suggestions") {
+                Section {
                     ForEach(model.suggestions, id: \.self) { term in
                         Button {
                             model.query = term
@@ -38,14 +35,22 @@ struct SearchView: View {
                             } icon: {
                                 Image(systemName: "magnifyingglass")
                                     .foregroundStyle(.secondary)
+                                    .font(.caption2)
                             }
                         }
                     }
+                } header: {
+                    Label("Suggestions", systemImage: "sparkles")
+                        .foregroundStyle(.secondary)
                 }
             }
 
             if model.isLoading {
-                LoadingRow()
+                Section {
+                    ForEach(0..<4, id: \.self) { _ in
+                        SkeletonRow()
+                    }
+                }
             }
 
             if let error = model.errorMessage, model.results.isEmpty, !model.isLoading {
@@ -53,13 +58,15 @@ struct SearchView: View {
             }
 
             if !model.results.isEmpty {
-                Section("Results") {
+                Section {
                     ForEach(model.results) { video in
                         NavigationLink(value: video) { VideoRowView(video: video) }
                     }
+                } header: {
+                    Label("Results", systemImage: "play.rectangle.on.rectangle")
                 }
             } else if model.suggestions.isEmpty && !library.recentSearches.isEmpty && !model.isLoading {
-                Section("Recent") {
+                Section {
                     ForEach(library.recentSearches, id: \.self) { term in
                         Button {
                             model.query = term
@@ -75,6 +82,8 @@ struct SearchView: View {
                             }
                         }
                     }
+                } header: {
+                    Label("Recent", systemImage: "clock")
                 }
             }
         }

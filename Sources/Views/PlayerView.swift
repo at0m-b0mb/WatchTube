@@ -100,19 +100,14 @@ struct PlayerView: View {
 
     @ViewBuilder private var upNext: some View {
         if !model.related.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Label("Up Next", systemImage: "text.line.first.and.arrowtriangle.forward")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .padding(.leading, 4)
-                ForEach(model.related) { video in
+                ForEach(model.related.prefix(8)) { video in
                     NavigationLink(value: video) {
                         VideoRowView(video: video)
-                            .padding(8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(.white.opacity(0.06))
-                            )
                     }
                     .buttonStyle(.plain)
                 }
@@ -166,14 +161,10 @@ struct PlayerView: View {
         if case .ready = model.phase {
             Color.black.ignoresSafeArea()
         } else {
-            AsyncImage(url: model.video.thumbnailURL) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                Color.black
-            }
-            .overlay(Color.black.opacity(0.55))
-            .blur(radius: 8)
-            .ignoresSafeArea()
+            ThumbnailView(url: model.video.thumbnailURL)
+                .overlay(Color.black.opacity(0.55))
+                .blur(radius: 8)
+                .ignoresSafeArea()
         }
     }
 }

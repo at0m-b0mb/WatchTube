@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// Landing screen: pick up where you left off, then a Trending shelf of
-/// poster cards. A gear in the top bar opens Settings.
 struct HomeView: View {
     @Environment(LibraryStore.self) private var library
     @State private var model = HomeViewModel()
@@ -20,7 +18,9 @@ struct HomeView: View {
 
             Section {
                 if model.isLoading && model.trending.isEmpty {
-                    LoadingRow()
+                    ForEach(0..<3, id: \.self) { _ in
+                        SkeletonCardRow()
+                    }
                 } else if let error = model.errorMessage, model.trending.isEmpty {
                     EmptyStateRow(icon: "wifi.exclamationmark", text: error)
                 } else {

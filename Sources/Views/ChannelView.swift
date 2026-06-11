@@ -14,7 +14,7 @@ struct ChannelView: View {
         List {
             Section {
                 if model.isLoading && model.videos.isEmpty {
-                    LoadingRow()
+                    ForEach(0..<3, id: \.self) { _ in SkeletonRow() }
                 } else if let error = model.errorMessage, model.videos.isEmpty {
                     EmptyStateRow(icon: "person.crop.circle.badge.exclamationmark", text: error)
                 } else {
