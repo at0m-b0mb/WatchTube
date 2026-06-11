@@ -1,17 +1,18 @@
 import SwiftUI
 
-/// App shell: three swipeable tabs (Home / Search / Library), each with its own
-/// navigation stack. The shared LibraryStore is injected for the whole tree.
+/// App shell: four swipeable tabs (Home / Search / Shorts / Library), each with
+/// its own navigation stack. The shared LibraryStore is injected for the tree.
 struct RootView: View {
     @State private var library = LibraryStore()
     @State private var selection: Tab = .initial
 
     enum Tab: Hashable {
-        case home, search, library
+        case home, search, shorts, library
 
         static var initial: Tab {
             switch ProcessInfo.processInfo.environment["WT_TAB"] {
             case "search": return .search
+            case "shorts": return .shorts
             case "library": return .library
             default: return .home
             }
@@ -35,6 +36,7 @@ struct RootView: View {
                 TabView(selection: $selection) {
                     NavigationStack { HomeView() }.tag(Tab.home)
                     NavigationStack { SearchView() }.tag(Tab.search)
+                    NavigationStack { ShortsView() }.tag(Tab.shorts)
                     NavigationStack { LibraryView() }.tag(Tab.library)
                 }
             }

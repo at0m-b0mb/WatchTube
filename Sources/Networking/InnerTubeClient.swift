@@ -49,10 +49,12 @@ struct InnerTubeClient {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
         + "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 
-    /// Clients tried, in order, when resolving a stream. TVHTML5 and IOS accept
-    /// the Google bearer token and stream via HLS; ANDROID_VR is keyless-only
-    /// but historically the least bot-gated, so it backstops everything.
-    private static let playbackClients: [PlayerClient] = [.tvhtml5, .ios, .androidVR]
+    /// One resolution attempt: which client, and whether to attach the Google
+    /// bearer token. Keyless attempts come first and are the proven path —
+    /// signing in only ever *appends* an authenticated attempt, so it can help
+    /// (age-restricted videos the account can reach) but can never break the
+    /// keyless playback that already works.
+    private struct Attempt { let client: PlayerClient; let useAuth: Bool }
 
     // MARK: - Search
 
@@ -81,42 +83,155 @@ struct InnerTubeClient {
         return videos
     }
 
+    // MARK: - Suggestions (as-you-type autocomplete)
+
+    /// Live query completions from YouTube's public suggest service. Returns an
+    /// empty list on any hiccup — suggestions are a nicety, never load-bearing.
+    func suggestions(for query: String) async -> [String] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        var components = URLComponents(string: "https://suggestqueries-clients6.youtube.com/complete/search")!
+        components.queryItems = [
+            URLQueryItem(name: "client", value: "youtube"),
+            URLQueryItem(name: "ds", value: "yt"),
+            URLQueryItem(name: "hl", value: language),
+            URLQueryItem(name: "q", value: trimmed)
+        ]
+        guard let url = components.url else { return [] }
+        var request = URLRequest(url: url)
+        request.setValue(webUserAgent, forHTTPHeaderField: "User-Agent")
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              var text = String(data: data, encoding: .utf8) else { return [] }
+
+        // Response is JSONP: window.google.ac.h([ "q", [["term",0,[…]], …] ])
+        guard let open = text.firstIndex(of: "("),
+              let close = text.lastIndex(of: ")") else { return [] }
+        text = String(text[text.index(after: open)..<close])
+        guard let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [Any],
+              json.count > 1, let rows = json[1] as? [[Any]] else { return [] }
+        return rows.compactMap { $0.first as? String }
+    }
+
+    // MARK: - Related / Up Next
+
+    /// Videos YouTube suggests alongside `videoId` (the watch-next rail). Modern
+    /// responses use `lockupViewModel`; our parser handles both that and the
+    /// legacy renderers.
+    func relatedVideos(to videoId: String) async throws -> [Video] {
+        let data = try await post(path: "next",
+                                  apiKey: Self.webKey,
+                                  userAgent: webUserAgent,
+                                  body: ["context": webContext, "videoId": videoId])
+        var videos = try parseVideos(from: data)
+        videos.removeAll { $0.id == videoId }   // drop the video we're watching
+        return videos
+    }
+
+    // MARK: - Shorts
+
+    /// A shelf of Shorts for `query` (defaults to a broad, always-populated
+    /// term). Parses only `shortsLockupViewModel` nodes, flagged `isShort`.
+    func shorts(query: String = "shorts") async throws -> [Video] {
+        let data = try await post(path: "search",
+                                  apiKey: Self.webKey,
+                                  userAgent: webUserAgent,
+                                  body: ["context": webContext, "query": query])
+        let videos = extractVideos(from: try jsonRoot(data), mode: .shortsOnly)
+        if videos.isEmpty { throw APIError.empty }
+        return videos
+    }
+
+    // MARK: - Channel
+
+    /// A channel's uploads (browse the channel id, Videos tab). `channelId` is
+    /// the `UC…` value carried on search results.
+    func channelVideos(channelId: String) async throws -> [Video] {
+        let data = try await post(path: "browse",
+                                  apiKey: Self.webKey,
+                                  userAgent: webUserAgent,
+                                  body: ["context": webContext,
+                                         "browseId": channelId,
+                                         "params": "EgZ2aWRlb3PyBgQKAjoA"])  // "Videos" tab
+        let videos = try parseVideos(from: data)
+        if videos.isEmpty { throw APIError.empty }
+        return videos
+    }
+
+    // MARK: - Account feeds (require Google sign-in)
+
+    /// An authenticated browse feed (subscriptions / liked / watch later).
+    /// These ride the Google bearer token, which Google has restricted for
+    /// InnerTube — so they may legitimately come back empty even when signed
+    /// in. Callers should present that as an honest "couldn't load", not a bug.
+    func accountFeed(_ feed: AccountFeed) async throws -> [Video] {
+        guard authorization != nil else { throw APIError.notPlayable("Sign in with Google first.") }
+        let data = try await post(path: "browse",
+                                  apiKey: Self.webKey,
+                                  userAgent: webUserAgent,
+                                  authorization: authorization,
+                                  body: ["context": webContext, "browseId": feed.browseId])
+        let videos = extractVideos(from: try jsonRoot(data), mode: .all)
+        if videos.isEmpty { throw APIError.empty }
+        return videos
+    }
+
+    enum AccountFeed {
+        case subscriptions, liked, watchLater
+        var browseId: String {
+            switch self {
+            case .subscriptions: "FEsubscriptions"
+            case .liked: "VLLL"
+            case .watchLater: "VLWL"
+            }
+        }
+    }
+
     private var webContext: [String: Any] {
         ["client": ["clientName": "WEB", "clientVersion": webClientVersion,
                     "hl": language, "gl": region]]
     }
 
-    private func parseVideos(from data: Data) throws -> [Video] {
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+    private func jsonRoot(_ data: Data) throws -> Any {
+        guard let root = try? JSONSerialization.jsonObject(with: data) else {
             throw APIError.decoding("response root")
         }
-        var renderers: [[String: Any]] = []
-        collectVideoRenderers(in: root, into: &renderers)
+        return root
+    }
 
-        var seen = Set<String>()
-        var videos: [Video] = []
-        for renderer in renderers {
-            guard let video = mapVideoRenderer(renderer), !seen.contains(video.id) else { continue }
-            seen.insert(video.id)
-            videos.append(video)
-        }
-        return videos
+    private func parseVideos(from data: Data) throws -> [Video] {
+        extractVideos(from: try jsonRoot(data), mode: .videosOnly)
     }
 
     // MARK: - Stream resolution
 
     func resolveStream(videoId: String) async throws -> StreamResolution {
         var resolver = self
-        // Fresh visitorData clears soft gating for keyless requests; it's
-        // skipped entirely when signed in (the account identity replaces it).
-        if resolver.authorization == nil, resolver.visitorData?.isEmpty ?? true {
+        // Fresh visitorData clears soft bot-gating for the keyless clients and
+        // is harmless when signed in, so we always try to grab one.
+        if resolver.visitorData?.isEmpty ?? true {
             resolver.visitorData = await Self.fetchVisitorData()   // best effort
+        }
+
+        // Proven keyless path first: IOS hands back an HLS manifest (ideal for
+        // the watch — native AVPlayer, adaptive, audio+video), ANDROID_VR is the
+        // least-gated keyless client, TVHTML5 backstops. Only after those do we
+        // add an authenticated TV attempt (when signed in) for account-gated
+        // content — so sign-in can only ever help, never break what works.
+        var attempts: [Attempt] = [
+            Attempt(client: .ios, useAuth: false),
+            Attempt(client: .androidVR, useAuth: false),
+            Attempt(client: .tvhtml5, useAuth: false)
+        ]
+        if authorization != nil {
+            attempts.append(Attempt(client: .tvhtml5, useAuth: true))
         }
 
         var authStatus: String?
         var fallbackReason = "No watch-playable stream found for this video."
-        for client in Self.playbackClients {
-            switch await resolver.attempt(videoId: videoId, client: client) {
+        for attempt in attempts {
+            switch await resolver.attempt(videoId: videoId,
+                                          client: attempt.client,
+                                          useAuth: attempt.useAuth) {
             case .ok(let resolution):
                 return resolution
             case .needsAuth(let status):
@@ -124,21 +239,18 @@ struct InnerTubeClient {
             case .noStream:
                 break
             case .httpError(let code):
-                fallbackReason = "YouTube rejected the \(client.clientName) request (HTTP \(code)). "
+                fallbackReason = "YouTube rejected the \(attempt.client.clientName) request (HTTP \(code)). "
                     + "The client may need updating."
             }
         }
 
-        // A verification prompt is the most actionable thing to surface, so it
-        // wins over a generic HTTP error from another client.
+        // Every client we tried (keyless and, if signed in, authenticated)
+        // came back gated. Surface the most actionable next step.
         if let status = authStatus {
-            if authorization == nil {
-                throw APIError.loginRequired(
-                    "YouTube wants verification for this video (\(status)). "
-                    + "Sign in with Google in Settings — or add a PoToken under Advanced.")
-            }
-            throw APIError.notPlayable(
-                "YouTube refused this video even while signed in (\(status)). Try another video.")
+            throw APIError.loginRequired(
+                "YouTube is gating this video (\(status)). It may be age-restricted "
+                + "or your network is being bot-checked — try another video, or add a "
+                + "PoToken in Settings → Advanced.")
         }
         throw APIError.notPlayable(fallbackReason)
     }
@@ -150,10 +262,10 @@ struct InnerTubeClient {
         case httpError(Int)
     }
 
-    private func attempt(videoId: String, client: PlayerClient) async -> ResolveOutcome {
-        // Bearer tokens come from YouTube's TV OAuth client, so only the
-        // TV/iOS-family clients accept them; ANDROID_VR always goes keyless.
-        let bearer = client.supportsAuth ? authorization : nil
+    private func attempt(videoId: String, client: PlayerClient, useAuth: Bool) async -> ResolveOutcome {
+        // The Google token is a TV-client OAuth token, so it's only ever
+        // attached to a TVHTML5 attempt the caller explicitly flagged.
+        let bearer = useAuth ? authorization : nil
 
         var body: [String: Any] = [
             "context": ["client": clientContext(for: client, authenticated: bearer != nil)],
@@ -275,26 +387,44 @@ struct InnerTubeClient {
         return token.isEmpty ? nil : token
     }
 
-    // MARK: - Search JSON walking
+    // MARK: - JSON walking
     //
-    // InnerTube search JSON is deeply nested and shifts between layouts, so we
-    // recursively gather every `videoRenderer` instead of hard-coding a path.
+    // InnerTube JSON is deeply nested and shifts between layouts (and now mixes
+    // legacy *Renderer nodes with newer *ViewModel nodes), so we recursively
+    // gather every known video-bearing node instead of hard-coding a path.
 
-    private func collectVideoRenderers(in node: Any, into result: inout [[String: Any]]) {
-        if let dict = node as? [String: Any] {
-            for key in ["videoRenderer", "gridVideoRenderer", "compactVideoRenderer"] {
-                if let renderer = dict[key] as? [String: Any] {
-                    result.append(renderer)
+    private enum ExtractMode {
+        case videosOnly   // regular videos + lockup videos, no Shorts
+        case shortsOnly   // only Shorts
+        case all          // everything (used for account feeds)
+    }
+
+    private func extractVideos(from root: Any, mode: ExtractMode) -> [Video] {
+        var seen = Set<String>()
+        var out: [Video] = []
+        func add(_ video: Video?) {
+            guard let video, !seen.contains(video.id) else { return }
+            seen.insert(video.id)
+            out.append(video)
+        }
+        func walk(_ node: Any) {
+            if let dict = node as? [String: Any] {
+                if mode != .shortsOnly {
+                    for key in ["videoRenderer", "gridVideoRenderer", "compactVideoRenderer"] {
+                        if let renderer = dict[key] as? [String: Any] { add(mapVideoRenderer(renderer)) }
+                    }
+                    if let lockup = dict["lockupViewModel"] as? [String: Any] { add(mapLockup(lockup)) }
                 }
-            }
-            for value in dict.values {
-                collectVideoRenderers(in: value, into: &result)
-            }
-        } else if let array = node as? [Any] {
-            for value in array {
-                collectVideoRenderers(in: value, into: &result)
+                if mode != .videosOnly, let short = dict["shortsLockupViewModel"] as? [String: Any] {
+                    add(mapShortsLockup(short))
+                }
+                for value in dict.values { walk(value) }
+            } else if let array = node as? [Any] {
+                for value in array { walk(value) }
             }
         }
+        walk(root)
+        return out
     }
 
     private func mapVideoRenderer(_ renderer: [String: Any]) -> Video? {
@@ -308,8 +438,51 @@ struct InnerTubeClient {
             id: id,
             title: title,
             channelTitle: channel,
-            thumbnailURL: thumbnailURL(in: renderer),
-            lengthText: text(renderer["lengthText"])
+            thumbnailURL: thumbnailURL(in: renderer) ?? Video.thumbnailURL(forVideoId: id),
+            lengthText: text(renderer["lengthText"]),
+            channelId: channelId(in: renderer)
+        )
+    }
+
+    /// Modern "lockup" card (related rail, some search results). Carries a
+    /// `contentId` (videoId) and a nested title; we synthesize the thumbnail
+    /// from the id since the layout's image block is fiddly and often absent.
+    private func mapLockup(_ vm: [String: Any]) -> Video? {
+        guard (vm["contentType"] as? String) == "LOCKUP_CONTENT_TYPE_VIDEO",
+              let id = vm["contentId"] as? String else { return nil }
+        let metadata = (vm["metadata"] as? [String: Any])?["lockupMetadataViewModel"] as? [String: Any]
+        let title = (metadata?["title"] as? [String: Any])?["content"] as? String ?? "Untitled"
+        return Video(
+            id: id,
+            title: title,
+            channelTitle: "",
+            thumbnailURL: Video.thumbnailURL(forVideoId: id),
+            lengthText: nil
+        )
+    }
+
+    /// A Short card. The videoId lives under the reel-watch endpoint; the title
+    /// is recovered from the accessibility string ("Title, N views - play Short").
+    private func mapShortsLockup(_ vm: [String: Any]) -> Video? {
+        let command = (vm["onTap"] as? [String: Any])?["innertubeCommand"] as? [String: Any]
+        let reel = command?["reelWatchEndpoint"] as? [String: Any]
+        guard let id = reel?["videoId"] as? String else { return nil }
+        var title = "Short"
+        if let a11y = vm["accessibilityText"] as? String {
+            title = a11y
+                .replacingOccurrences(of: " - play Short", with: "")
+            if let range = title.range(of: #", [\d,.]+ ?[KMB]? ?(thousand|million|billion)? ?views?$"#,
+                                       options: .regularExpression) {
+                title.removeSubrange(range)
+            }
+        }
+        return Video(
+            id: id,
+            title: title,
+            channelTitle: "",
+            thumbnailURL: Video.thumbnailURL(forVideoId: id),
+            lengthText: nil,
+            isShort: true
         )
     }
 
@@ -319,6 +492,21 @@ struct InnerTubeClient {
         if let runs = node["runs"] as? [[String: Any]] {
             let joined = runs.compactMap { $0["text"] as? String }.joined()
             return joined.isEmpty ? nil : joined
+        }
+        return nil
+    }
+
+    /// Pulls the channel's `UC…` id out of a renderer's byline navigation
+    /// endpoint, so a tap can open that channel's page.
+    private func channelId(in renderer: [String: Any]) -> String? {
+        for key in ["longBylineText", "shortBylineText", "ownerText"] {
+            guard let runs = (renderer[key] as? [String: Any])?["runs"] as? [[String: Any]] else { continue }
+            for run in runs {
+                if let browseId = (((run["navigationEndpoint"] as? [String: Any])?["browseEndpoint"]) as? [String: Any])?["browseId"] as? String,
+                   browseId.hasPrefix("UC") {
+                    return browseId
+                }
+            }
         }
         return nil
     }
@@ -355,21 +543,10 @@ private struct PlayerClient {
     let extraContext: [String: Any]
     let userAgent: String
     let apiKey: String?
-    /// Whether this client accepts the TV-client OAuth bearer token.
-    let supportsAuth: Bool
 
-    /// PlayStation/TV client — streams via HLS, lightest bot-gating, and the
-    /// natural home for the TV OAuth token when signed in.
-    static let tvhtml5 = PlayerClient(
-        clientName: "TVHTML5",
-        clientVersion: "7.20250120.19.00",
-        extraContext: [:],
-        userAgent: "Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko)",
-        apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-        supportsAuth: true
-    )
-
-    /// iOS client — yields HLS where allowed. Bump version + userAgent together.
+    /// iOS client — hands back a ready-to-play HLS manifest (adaptive,
+    /// audio+video muxed), which is the ideal format for the watch. Tried
+    /// first. Bump clientVersion + userAgent together when it breaks.
     static let ios = PlayerClient(
         clientName: "IOS",
         clientVersion: "20.10.4",
@@ -378,12 +555,11 @@ private struct PlayerClient {
             "osName": "iPhone", "osVersion": "18.3.2.22D82", "utcOffsetMinutes": 0
         ],
         userAgent: "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
-        apiKey: "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
-        supportsAuth: true
+        apiKey: "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc"
     )
 
-    /// Quest VR client — keyless-only, but historically the least PoToken-gated
-    /// client, so it backstops the chain. Returns direct progressive URLs.
+    /// Quest VR client — keyless, historically the least PoToken-gated client,
+    /// so it backstops iOS. Returns a direct muxed progressive URL (itag 18).
     static let androidVR = PlayerClient(
         clientName: "ANDROID_VR",
         clientVersion: "1.62.27",
@@ -394,8 +570,18 @@ private struct PlayerClient {
         ],
         userAgent: "com.google.android.apps.youtube.vr.oculus/1.62.27 "
             + "(Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-        apiKey: nil,
-        supportsAuth: false
+        apiKey: nil
+    )
+
+    /// PlayStation/TV client — the one client the Google TV OAuth token is
+    /// valid for, so it carries the authenticated attempt for account-gated
+    /// (e.g. age-restricted) videos when signed in.
+    static let tvhtml5 = PlayerClient(
+        clientName: "TVHTML5",
+        clientVersion: "7.20250120.19.00",
+        extraContext: [:],
+        userAgent: "Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
     )
 }
 

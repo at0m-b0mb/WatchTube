@@ -17,6 +17,8 @@ final class PlayerViewModel {
     /// True when the failure is the kind a Google sign-in would likely fix —
     /// the player offers a sign-in shortcut next to Retry.
     private(set) var needsSignIn = false
+    /// Related videos shown under the player as "Up Next".
+    private(set) var related: [Video] = []
     let video: Video
 
     @ObservationIgnored private var hasStarted = false
@@ -30,6 +32,14 @@ final class PlayerViewModel {
         guard !hasStarted else { return }
         hasStarted = true
         Task { await resolveAndPlay() }
+        Task { await loadRelated() }
+    }
+
+    private func loadRelated() async {
+        // Best-effort — Up Next is a bonus rail, never blocks playback.
+        if let videos = try? await AppClient.make().relatedVideos(to: video.id) {
+            related = videos
+        }
     }
 
     func retry() {

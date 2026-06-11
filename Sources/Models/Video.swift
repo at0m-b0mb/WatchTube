@@ -10,9 +10,17 @@ struct Video: Identifiable, Hashable, Codable {
     let channelTitle: String
     let thumbnailURL: URL?
     let lengthText: String?     // human label like "4:13" when available
+    var channelId: String? = nil   // UC… id, when known — powers channel pages
+    var isShort: Bool = false      // vertical Short, played full-screen
 
     /// The canonical watch URL — handy for "open on iPhone" handoff later.
     var watchURL: URL? {
         URL(string: "https://www.youtube.com/watch?v=\(id)")
+    }
+
+    /// A thumbnail that always exists — InnerTube's newer "viewModel" layouts
+    /// don't always carry one, so we fall back to YouTube's canonical CDN path.
+    static func thumbnailURL(forVideoId id: String) -> URL? {
+        URL(string: "https://i.ytimg.com/vi/\(id)/hqdefault.jpg")
     }
 }

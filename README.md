@@ -33,11 +33,19 @@ stays fully keyless.
 
 ## ✨ Features
 
-- 🔎 **Keyless search** — no API key, no Google account, nothing tied to you
+- 🔎 **Keyless search** with **live autocomplete** — suggestions as you type, so
+  you barely touch the tiny keyboard
+- 📲 **Shorts feed** — a dedicated tab; swipe vertically through full-screen
+  Shorts that play and loop, just like the phone app
+- ▶️ **Up Next** — related videos under the player, one tap to keep watching
+- 👤 **Channel pages** — tap a creator to browse their uploads
 - 🔑 **Optional Google sign-in** — the TV-style device flow (show a code on the
-  watch, enter it at google.com/device on your phone). Scope is **YouTube-only**;
-  it unlocks videos that refuse to play anonymously. Signed out = fully keyless.
-- 🔥 **Trending home feed** with a graceful fallback so it's never empty
+  watch, enter it at google.com/device on your phone). Scope is **YouTube-only**.
+  Signing in **only ever adds** access (age-restricted videos, and your
+  Subscriptions / Liked / Watch Later feeds) — it can never break the keyless
+  playback that already works. Signed out = fully keyless.
+- 🔥 **Trending home feed** of poster cards, with a graceful fallback so it's
+  never empty
 - ▶️ **Video + audio on-watch** via adaptive **HLS** (`AVPlayer`) — great on cellular
 - ❤️ **Favorites**, 🕘 **Watch history**, and 🔁 **Recent searches** — all on-device
 - 📡 **Data Saver** — caps bitrate to save cellular data and battery
@@ -52,19 +60,23 @@ stays fully keyless.
 
 | Step | What happens |
 |------|--------------|
-| **Search** | POST `youtubei/v1/search` (WEB client); we recursively gather `videoRenderer` nodes. |
-| **Resolve** | POST `youtubei/v1/player` trying **TVHTML5 → iOS → ANDROID_VR** clients; first one returning an **HLS `.m3u8`** (or a direct progressive URL) wins. |
-| **Sign in** *(optional)* | OAuth **device flow** with YouTube's public TV client: the watch shows a code, you approve it at google.com/device, and player requests ride your account as a `Bearer` token. |
+| **Search** | POST `youtubei/v1/search` (WEB client); we recursively gather both the legacy `videoRenderer` nodes and the newer `lockupViewModel` / `shortsLockupViewModel` cards. |
+| **Suggest** | GET YouTube's public `complete/search` service for as-you-type autocomplete. |
+| **Resolve** | POST `youtubei/v1/player` trying **iOS → ANDROID_VR → TVHTML5** clients, all **keyless first**; first one returning an **HLS `.m3u8`** (or a direct progressive URL) wins. iOS yields HLS, ideal for the watch. |
+| **Related** | POST `youtubei/v1/next` for the Up Next rail (parsed from `lockupViewModel`). |
+| **Sign in** *(optional)* | OAuth **device flow** with YouTube's public TV client: the watch shows a code, you approve it at google.com/device. The `Bearer` token is attached **only to an extra TVHTML5 attempt appended after** the keyless ones — so it can unlock account-gated videos but never breaks working playback. |
 | **Play** | `AVPlayer` plays the HLS URL natively — adaptive bitrate, audio + video. |
 
-The trick: the TV/iOS InnerTube clients hand back a ready-to-play HLS manifest, so
+The trick: the iOS/TV InnerTube clients hand back a ready-to-play HLS manifest, so
 we **never** run YouTube's signature-deciphering JavaScript (which the watch can't
 do anyway). **Reality check (2026):** YouTube increasingly gates stream resolution
-behind bot-detection. **Search is reliable**, but if a video resolves to
-`LOGIN_REQUIRED` you have two outs, in order of convenience: **Settings ▸ Account ▸
-Sign in with Google**, or paste a **PoToken + visitorData** into Settings →
-Advanced. All the fragile stuff lives in two files:
-`Sources/Networking/InnerTubeClient.swift` and `Sources/Auth/GoogleAuth.swift`.
+behind bot-detection, and Google has **restricted OAuth for InnerTube** — so the
+keyless clients are the reliable path and sign-in is a *bonus*, never a crutch.
+**Search is reliable**; if a video resolves to `LOGIN_REQUIRED` it's usually
+age-restricted or your network is being bot-checked — try another video or paste a
+**PoToken + visitorData** into Settings → Advanced. All the fragile stuff lives in
+two files: `Sources/Networking/InnerTubeClient.swift` and
+`Sources/Auth/GoogleAuth.swift`.
 
 ---
 
@@ -223,12 +235,14 @@ WatchTube/
 │   ├── WatchTubeApp.swift          @main entry point
 │   ├── Info.plist                  WKApplication + WKWatchOnly, ATS ON, audio mode
 │   └── Assets.xcassets/            app icon + accent color
+├── deploy.sh                      one-command sideload (free Apple ID refresh)
 └── Sources/
-    ├── Models/                     Video (Codable), StreamResolution
+    ├── Models/                     Video, StreamResolution, Channel (ChannelRef)
     ├── Auth/
     │   └── GoogleAuth.swift        optional Google sign-in (OAuth device flow)
     ├── Networking/
-    │   ├── InnerTubeClient.swift   ★ the extraction layer — edit this when it breaks
+    │   ├── InnerTubeClient.swift   ★ extraction layer — search, player, suggest,
+    │   │                             next (related), shorts, channel, account feeds
     │   ├── AppClient.swift         builds a client from saved settings + sign-in
     │   └── APIError.swift
     ├── Security/
@@ -238,11 +252,13 @@ WatchTube/
     ├── Support/
     │   ├── Haptics.swift           Taptic Engine helper
     │   ├── Theme.swift             shared backdrop gradient & poster scrim
+    │   ├── ProvisioningInfo.swift  free-Apple-ID expiry countdown
     │   └── SampleData.swift        seed data for screenshots (WT_SEED=1)
-    ├── ViewModels/                 Search / Home / Player (@Observable)
-    └── Views/                      Root (tabs), Home, Search, Library, Player,
-                                    Settings, GoogleSignIn, VideoRow, VideoCard,
-                                    Components
+    ├── ViewModels/                 Search / Home / Player / Shorts / Channel /
+    │                                Account (@Observable)
+    └── Views/                      Root (4 tabs), Home, Search, Shorts, Library,
+                                    Player, Channel, AccountFeed, Settings,
+                                    GoogleSignIn, VideoRow, VideoCard, Components
 ```
 
 ---

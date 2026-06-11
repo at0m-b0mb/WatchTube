@@ -1,10 +1,10 @@
 import SwiftUI
 import AVKit
 
-/// Plays the selected video over a blurred poster backdrop. Resolves a stream
-/// on appear, records it to history, and offers a favorite toggle + retry.
-/// When YouTube demands verification, a Google sign-in shortcut appears right
-/// in the error state — and playback retries automatically after signing in.
+/// Plays the selected video, then lets you scroll to a "View Channel" shortcut
+/// and an "Up Next" rail of related videos. Resolves a stream on appear, records
+/// it to history, and offers a favorite toggle + retry. When YouTube demands
+/// verification, a Google sign-in shortcut appears right in the error state.
 struct PlayerView: View {
     @Environment(LibraryStore.self) private var library
     @State private var model: PlayerViewModel
@@ -21,67 +21,28 @@ struct PlayerView: View {
 
             switch model.phase {
             case .loading:
-                VStack(spacing: 10) {
-                    ProgressView()
-                        .controlSize(.large)
-                        .tint(.red)
-                    Text(model.title)
-                        .font(.caption2)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                    Text("Finding stream…")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                .padding()
+                loadingView
 
             case .ready(let player):
-                VideoPlayer(player: player)
-                    .ignoresSafeArea()
-
-            case .failed(let message):
                 ScrollView {
                     VStack(spacing: 10) {
-                        Image(systemName: model.needsSignIn
-                              ? "person.crop.circle.badge.exclamationmark"
-                              : "exclamationmark.triangle")
-                            .font(.title3)
-                            .foregroundStyle(.yellow)
-                        Text(message)
-                            .font(.footnote)
-                            .multilineTextAlignment(.center)
+                        VideoPlayer(player: player)
+                            .frame(height: 138)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .strokeBorder(.white.opacity(0.08))
+                            )
 
-                        if model.needsSignIn {
-                            NavigationLink {
-                                GoogleSignInView()
-                            } label: {
-                                Label("Sign in with Google", systemImage: "person.crop.circle.badge.plus")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.blue)
-
-                            Button {
-                                model.retry()
-                            } label: {
-                                Label("Retry", systemImage: "arrow.clockwise")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(.red)
-                        } else {
-                            Button {
-                                model.retry()
-                            } label: {
-                                Label("Retry", systemImage: "arrow.clockwise")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.red)
-                        }
+                        channelLink
+                        upNext
                     }
-                    .padding()
+                    .padding(.horizontal, 4)
+                    .padding(.bottom, 8)
                 }
+
+            case .failed(let message):
+                failureView(message)
             }
         }
         .navigationTitle(model.title)
@@ -99,11 +60,105 @@ struct PlayerView: View {
         .onAppear {
             library.recordWatch(model.video)
             model.loadIfNeeded()
-            // Coming back from a successful sign-in: retry without making the
-            // user hunt for the button.
             if case .failed = model.phase, model.needsSignIn, auth.isSignedIn {
                 model.retry()
             }
+        }
+    }
+
+    // MARK: - Pieces
+
+    private var loadingView: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.large)
+                .tint(.red)
+            Text(model.title)
+                .font(.caption2)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+            Text("Finding stream…")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+    }
+
+    @ViewBuilder private var channelLink: some View {
+        if let channelId = model.video.channelId, !channelId.isEmpty {
+            NavigationLink(value: ChannelRef(id: channelId, title: model.video.channelTitle)) {
+                Label(model.video.channelTitle.isEmpty ? "View Channel" : model.video.channelTitle,
+                      systemImage: "person.crop.circle")
+                    .font(.caption)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.bordered)
+            .tint(.gray)
+        }
+    }
+
+    @ViewBuilder private var upNext: some View {
+        if !model.related.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Up Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 4)
+                ForEach(model.related) { video in
+                    NavigationLink(value: video) {
+                        VideoRowView(video: video)
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(.white.opacity(0.06))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func failureView(_ message: String) -> some View {
+        ScrollView {
+            VStack(spacing: 10) {
+                Image(systemName: model.needsSignIn
+                      ? "person.crop.circle.badge.exclamationmark"
+                      : "exclamationmark.triangle")
+                    .font(.title3)
+                    .foregroundStyle(.yellow)
+                Text(message)
+                    .font(.footnote)
+                    .multilineTextAlignment(.center)
+
+                if model.needsSignIn {
+                    NavigationLink {
+                        GoogleSignInView()
+                    } label: {
+                        Label("Sign in with Google", systemImage: "person.crop.circle.badge.plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+
+                    // Secondary when a sign-in button is already the primary CTA.
+                    Button { model.retry() } label: {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                } else {
+                    Button { model.retry() } label: {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                }
+            }
+            .padding()
         }
     }
 

@@ -37,6 +37,7 @@ struct HomeView: View {
         }
         .navigationTitle("WatchTube")
         .navigationDestination(for: Video.self) { PlayerView(video: $0) }
+        .navigationDestination(for: ChannelRef.self) { ChannelView(channel: $0) }
         .brandBackdrop()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
