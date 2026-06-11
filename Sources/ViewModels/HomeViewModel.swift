@@ -21,7 +21,7 @@ final class HomeViewModel {
     func reload() async {
         isLoading = true
         errorMessage = nil
-        let client = AppClient.make()
+        let client = await AppClient.make()
         do {
             trending = try await client.trending()
         } catch {

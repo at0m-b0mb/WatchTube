@@ -41,5 +41,6 @@ struct LibraryView: View {
         }
         .navigationTitle("Library")
         .navigationDestination(for: Video.self) { PlayerView(video: $0) }
+        .brandBackdrop()
     }
 }

@@ -12,6 +12,9 @@ enum KeychainStore {
     enum Keys {
         static let poToken = "poToken"
         static let visitorData = "visitorData"
+        static let googleAccessToken = "google.accessToken"
+        static let googleRefreshToken = "google.refreshToken"
+        static let googleTokenExpiry = "google.tokenExpiry"
     }
 
     private static let service = "com.at0m.watchtube"

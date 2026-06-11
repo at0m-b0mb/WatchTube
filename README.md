@@ -8,8 +8,10 @@
 
 A small, **keyless, privacy-respecting YouTube client for Apple Watch** — built for
 the **Ultra**, runs on any **watchOS 10+** watch. Search YouTube and play video +
-audio **directly on the watch**: no paired iPhone, no Google account, no API key,
-no analytics. **Free for anyone.**
+audio **directly on the watch**: no paired iPhone, no Google account required, no
+API key, no analytics. **Free for anyone.** When YouTube bot-gates a video, an
+**optional Google sign-in** (YouTube-scope only) unlocks it — signed out, the app
+stays fully keyless.
 
 <p align="center">
   <img src="docs/screenshots/home.png" width="158" alt="Home"/>
@@ -32,6 +34,9 @@ no analytics. **Free for anyone.**
 ## ✨ Features
 
 - 🔎 **Keyless search** — no API key, no Google account, nothing tied to you
+- 🔑 **Optional Google sign-in** — the TV-style device flow (show a code on the
+  watch, enter it at google.com/device on your phone). Scope is **YouTube-only**;
+  it unlocks videos that refuse to play anonymously. Signed out = fully keyless.
 - 🔥 **Trending home feed** with a graceful fallback so it's never empty
 - ▶️ **Video + audio on-watch** via adaptive **HLS** (`AVPlayer`) — great on cellular
 - ❤️ **Favorites**, 🕘 **Watch history**, and 🔁 **Recent searches** — all on-device
@@ -48,28 +53,32 @@ no analytics. **Free for anyone.**
 | Step | What happens |
 |------|--------------|
 | **Search** | POST `youtubei/v1/search` (WEB client); we recursively gather `videoRenderer` nodes. |
-| **Resolve** | POST `youtubei/v1/player` trying **TVHTML5 → iOS** clients; first one returning an **HLS `.m3u8`** wins. |
+| **Resolve** | POST `youtubei/v1/player` trying **TVHTML5 → iOS → ANDROID_VR** clients; first one returning an **HLS `.m3u8`** (or a direct progressive URL) wins. |
+| **Sign in** *(optional)* | OAuth **device flow** with YouTube's public TV client: the watch shows a code, you approve it at google.com/device, and player requests ride your account as a `Bearer` token. |
 | **Play** | `AVPlayer` plays the HLS URL natively — adaptive bitrate, audio + video. |
 
 The trick: the TV/iOS InnerTube clients hand back a ready-to-play HLS manifest, so
 we **never** run YouTube's signature-deciphering JavaScript (which the watch can't
 do anyway). **Reality check (2026):** YouTube increasingly gates stream resolution
 behind bot-detection. **Search is reliable**, but if a video resolves to
-`LOGIN_REQUIRED`, paste a **PoToken + visitorData** into Settings → Advanced.
-All the fragile stuff lives in one file: `Sources/Networking/InnerTubeClient.swift`.
+`LOGIN_REQUIRED` you have two outs, in order of convenience: **Settings ▸ Account ▸
+Sign in with Google**, or paste a **PoToken + visitorData** into Settings →
+Advanced. All the fragile stuff lives in two files:
+`Sources/Networking/InnerTubeClient.swift` and `Sources/Auth/GoogleAuth.swift`.
 
 ---
 
 ## 📲 Install on your Apple Watch — step by step
 
 This installs WatchTube straight onto your watch so it runs **without your iPhone**.
-It takes ~15 minutes the first time. No jailbreak, no developer fee required.
+It takes ~15 minutes the first time. **No jailbreak, no developer fee** — a free
+Apple ID is all you need.
 
 ### What you need
 - A **Mac** with **Xcode** (free, Mac App Store).
 - Your **Apple Watch** (Ultra 3 or any watchOS 10+) **paired to an iPhone**. You
   still need the iPhone *for setup and trust* — the app itself runs standalone after.
-- A free **Apple ID** (a paid Apple Developer account just makes it last longer).
+- A **free Apple ID** — that's it. No $99 developer account needed.
 - **Homebrew** (to install XcodeGen): https://brew.sh
 
 ### 1 · Get the tools
@@ -93,7 +102,7 @@ In Xcode:
 2. Tick **Automatically manage signing**.
 3. Set **Team** to your Apple ID. (No team listed? **Xcode ▸ Settings ▸ Accounts ▸
    “+” ▸ Apple ID**, sign in, come back.)
-4. If you see a *“bundle identifier is not available”* error, change the
+4. If you see a *”bundle identifier is not available”* error, change the
    **Bundle Identifier** to something unique, e.g. `com.yourname.watchtube`.
 
 ### 4 · Turn on Developer Mode (one time)
@@ -103,21 +112,35 @@ In Xcode:
 
 ### 5 · Run it onto the watch
 1. In Xcode's toolbar (top center), click the destination dropdown and pick **your
-   Apple Watch** (not a simulator). First time, Xcode shows *“Preparing watch for
+   Apple Watch** (not a simulator). First time, Xcode shows *”Preparing watch for
    development…”* — this can take several minutes. Be patient and keep both devices
    unlocked.
 2. Press **▶︎ Run** (**⌘R**). Xcode builds, installs, and launches WatchTube.
 
 ### 6 · Trust the developer & launch
-1. The first launch may say *“Untrusted Developer.”* On the **watch**: Settings ▸
+1. The first launch may say *”Untrusted Developer.”* On the **watch**: Settings ▸
    General ▸ **VPN & Device Management** ▸ tap your Apple ID profile ▸ **Trust**.
 2. Open **WatchTube** from your watch's app grid. Done — search and play. 🎉
 
-### Keeping it installed
+### 🔄 Keeping it installed (free Apple ID = 7 days)
+
+With a free Apple ID, the app expires after **7 days**. WatchTube shows a
+countdown in **Settings** (green → yellow → red) so you always know. When it's
+time, just run this **one command** from the WatchTube folder:
+
+```sh
+./deploy.sh                  # re-builds and installs — takes ~2 minutes
+```
+
+Or, if you prefer Xcode: just press **⌘R** again.
+
 | Account | Lasts | To renew |
 |---------|-------|----------|
-| **Free Apple ID** | **7 days** | Re-run from Xcode (**⌘R**) to refresh |
+| **Free Apple ID** | **7 days** | `./deploy.sh` or ⌘R in Xcode |
 | **Paid Apple Developer ($99/yr)** | **1 year** | Re-sign once a year |
+
+> **Tip:** `./deploy.sh --simulator` runs it in the watch simulator if you just
+> want to try it out without touching your real watch.
 
 ### Troubleshooting
 - **Watch isn't in the destination list** → unlock it, put it on the charger, make
@@ -125,7 +148,9 @@ In Xcode:
 - **“Unable to install”** → make sure Developer Mode is on (Step 4) and your Team is
   set (Step 3).
 - **App opens but a video says `LOGIN_REQUIRED`** → YouTube is bot-gating your
-  network. Add a **PoToken + visitorData** in **Settings ▸ Advanced** (see
+  network. Easiest fix: **Settings ▸ Account ▸ Sign in with Google** (the player
+  error screen also offers the shortcut). Or add a **PoToken + visitorData** in
+  **Settings ▸ Advanced** (see
   [yt-dlp's PO-Token guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide)).
   Search still works regardless.
 
@@ -144,21 +169,30 @@ open WatchTube.xcodeproj         # pick an "Apple Watch Ultra" simulator, press 
 YouTube rotates client versions and tightens access. If search or playback stops,
 **one file** needs attention: `Sources/Networking/InnerTubeClient.swift`.
 
-- **Playback fails / `LOGIN_REQUIRED`:** bump the **TVHTML5 / iOS** entries in
-  `playbackClients` (their `clientVersion` + `userAgent`) to current values, and/or
-  add a `PoToken` in **Settings ▸ Advanced**.
+- **Playback fails / `LOGIN_REQUIRED`:** sign in with Google (Settings ▸ Account),
+  bump the **TVHTML5 / iOS / ANDROID_VR** entries in `playbackClients` (their
+  `clientVersion` + `userAgent`) to current values, and/or add a `PoToken` in
+  **Settings ▸ Advanced**.
 - **Search returns nothing:** bump `webClientVersion`.
+- **Sign-in stops working:** Google occasionally tightens the TV device flow
+  (`Sources/Auth/GoogleAuth.swift`). If that happens the app just behaves as
+  signed-out — keyless playback and PoTokens keep working.
 
 There's no key to rotate and nothing tied to your identity — these are public
-values shipped inside YouTube's own clients.
+values shipped inside YouTube's own clients. (Sign-in is the one exception:
+that token is yours, it lives in the Keychain, and signing out revokes it.)
 
 ---
 
 ## 🔒 Security & privacy posture
 
-- **No accounts, no sign-in, no analytics.** History/favorites never leave the watch.
+- **Sign-in optional, keyless by default; no analytics.** History/favorites never
+  leave the watch. If you do sign in, the OAuth scope is **YouTube-only** (never
+  email/contacts/Drive), the tokens live in the Keychain, and **Sign Out** both
+  wipes them and revokes the grant with Google.
 - **App Transport Security stays fully ON.** Every endpoint is HTTPS
-  (`www.youtube.com`, `*.googlevideo.com`); **zero** ATS exceptions.
+  (`www.youtube.com`, `*.googlevideo.com`, `oauth2.googleapis.com`); **zero** ATS
+  exceptions.
 - **Secrets in the Keychain**, not `UserDefaults` — encrypted at rest, passcode
   gated (`AfterFirstUnlock`).
 - **No third-party dependencies.** 100% first-party Apple frameworks (SwiftUI,
@@ -171,7 +205,7 @@ values shipped inside YouTube's own clients.
 - **Playback resolution is gated by YouTube's anti-bot system (2026).** Search
   always works; resolution may return `LOGIN_REQUIRED` depending on your network —
   residential IPs (your watch on Wi-Fi/cellular) fare far better than datacenter
-  IPs. When gated, add a PoToken in Settings.
+  IPs. When gated, sign in with Google or add a PoToken in Settings.
 - **Brittle by nature** — see "When it breaks".
 - **Age-restricted / some music videos** may need a PoToken.
 - **Streaming only** — no offline downloads.
@@ -191,20 +225,24 @@ WatchTube/
 │   └── Assets.xcassets/            app icon + accent color
 └── Sources/
     ├── Models/                     Video (Codable), StreamResolution
+    ├── Auth/
+    │   └── GoogleAuth.swift        optional Google sign-in (OAuth device flow)
     ├── Networking/
     │   ├── InnerTubeClient.swift   ★ the extraction layer — edit this when it breaks
-    │   ├── AppClient.swift         builds a client from saved settings
+    │   ├── AppClient.swift         builds a client from saved settings + sign-in
     │   └── APIError.swift
     ├── Security/
-    │   └── KeychainStore.swift     encrypted storage for optional secrets
+    │   └── KeychainStore.swift     encrypted storage for tokens & secrets
     ├── Storage/
     │   └── LibraryStore.swift      favorites / history / recent searches (on-device)
     ├── Support/
     │   ├── Haptics.swift           Taptic Engine helper
+    │   ├── Theme.swift             shared backdrop gradient & poster scrim
     │   └── SampleData.swift        seed data for screenshots (WT_SEED=1)
     ├── ViewModels/                 Search / Home / Player (@Observable)
     └── Views/                      Root (tabs), Home, Search, Library, Player,
-                                    Settings, VideoRow, Components
+                                    Settings, GoogleSignIn, VideoRow, VideoCard,
+                                    Components
 ```
 
 ---

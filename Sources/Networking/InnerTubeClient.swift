@@ -5,20 +5,23 @@ import Foundation
 // ─────────────────────────────────────────────────────────────────────────────
 //
 //  Talks to YouTube's internal "InnerTube" API (the endpoints the official apps
-//  use). No API key to create, no Google account — that's why WatchTube is
-//  keyless and "free for anyone."
+//  use). No API key to create — that's why WatchTube is keyless and "free for
+//  anyone."
 //
 //    • search(query:)          -> WEB client, returns clean videoRenderers
-//    • resolveStream(videoId:) -> tries TVHTML5 then IOS, returning the first
-//                                 that yields an HLS (.m3u8) manifest AVPlayer
-//                                 can play directly (audio + video).
+//    • resolveStream(videoId:) -> tries TVHTML5 → IOS → ANDROID_VR, returning
+//                                 the first that yields an HLS (.m3u8) manifest
+//                                 or a direct progressive URL AVPlayer can play.
+//
+//  Authentication (all optional, in order of niceness):
+//    1. Google sign-in (GoogleAuth) — a bearer token is attached to player
+//       requests on the clients that accept it, so YouTube treats playback as
+//       your account and skips the bot wall.
+//    2. PoToken + visitorData pasted in Settings → Advanced.
+//    3. Nothing — fully keyless; ANDROID_VR is the least-gated keyless client.
 //
 //  ⚠️  THIS IS WHAT BREAKS WHEN YOUTUBE CHANGES THINGS.
-//      YouTube actively gates stream resolution behind bot-detection. Depending
-//      on your network and the day, a video may come back as LOGIN_REQUIRED —
-//      that means YouTube wants a "Proof of Origin" token. Paste a PoToken +
-//      visitorData in Settings → Advanced to get past it. The knobs to refresh
-//      live in `playbackClients` and `webClientVersion` below.
+//      The knobs to refresh live in `playbackClients` and `webClientVersion`.
 //
 //  Keys below are public values shipped inside YouTube's own clients — not
 //  secrets, not tied to you.
@@ -29,6 +32,12 @@ struct InnerTubeClient {
     var region = "US"
     var poToken: String? = nil
     var visitorData: String? = nil
+    /// Google OAuth access token (set when the user signed in). Only attached
+    /// to player requests — search stays keyless so it can never break from an
+    /// expired token.
+    var authorization: String? = nil
+    /// Mirrors the Data Saver toggle: lowers the progressive-quality cap.
+    var dataSaver = false
 
     /// Hitting www.youtube.com (not the youtubei.googleapis.com gateway, which
     /// rejects player calls with FAILED_PRECONDITION).
@@ -40,9 +49,10 @@ struct InnerTubeClient {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
         + "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 
-    /// Clients tried, in order, when resolving a stream. TVHTML5 streams via HLS
-    /// and is the lightest-gated; IOS also yields HLS where it's allowed.
-    private static let playbackClients: [PlayerClient] = [.tvhtml5, .ios]
+    /// Clients tried, in order, when resolving a stream. TVHTML5 and IOS accept
+    /// the Google bearer token and stream via HLS; ANDROID_VR is keyless-only
+    /// but historically the least bot-gated, so it backstops everything.
+    private static let playbackClients: [PlayerClient] = [.tvhtml5, .ios, .androidVR]
 
     // MARK: - Search
 
@@ -97,29 +107,40 @@ struct InnerTubeClient {
 
     func resolveStream(videoId: String) async throws -> StreamResolution {
         var resolver = self
-        if resolver.visitorData?.isEmpty ?? true {
+        // Fresh visitorData clears soft gating for keyless requests; it's
+        // skipped entirely when signed in (the account identity replaces it).
+        if resolver.authorization == nil, resolver.visitorData?.isEmpty ?? true {
             resolver.visitorData = await Self.fetchVisitorData()   // best effort
         }
 
-        var authReason: String? = nil
+        var authStatus: String?
         var fallbackReason = "No watch-playable stream found for this video."
         for client in Self.playbackClients {
             switch await resolver.attempt(videoId: videoId, client: client) {
             case .ok(let resolution):
                 return resolution
             case .needsAuth(let status):
-                authReason = "YouTube wants verification for this video (\(status)). "
-                    + "Try another video, or add a PoToken in Settings → Advanced."
+                authStatus = status
             case .noStream:
-                fallbackReason = "No watch-playable stream found for this video."
+                break
             case .httpError(let code):
                 fallbackReason = "YouTube rejected the \(client.clientName) request (HTTP \(code)). "
                     + "The client may need updating."
             }
         }
+
         // A verification prompt is the most actionable thing to surface, so it
         // wins over a generic HTTP error from another client.
-        throw APIError.notPlayable(authReason ?? fallbackReason)
+        if let status = authStatus {
+            if authorization == nil {
+                throw APIError.loginRequired(
+                    "YouTube wants verification for this video (\(status)). "
+                    + "Sign in with Google in Settings — or add a PoToken under Advanced.")
+            }
+            throw APIError.notPlayable(
+                "YouTube refused this video even while signed in (\(status)). Try another video.")
+        }
+        throw APIError.notPlayable(fallbackReason)
     }
 
     private enum ResolveOutcome {
@@ -130,13 +151,19 @@ struct InnerTubeClient {
     }
 
     private func attempt(videoId: String, client: PlayerClient) async -> ResolveOutcome {
+        // Bearer tokens come from YouTube's TV OAuth client, so only the
+        // TV/iOS-family clients accept them; ANDROID_VR always goes keyless.
+        let bearer = client.supportsAuth ? authorization : nil
+
         var body: [String: Any] = [
-            "context": ["client": clientContext(for: client)],
+            "context": ["client": clientContext(for: client, authenticated: bearer != nil)],
             "videoId": videoId,
             "contentCheckOk": true,
             "racyCheckOk": true
         ]
-        if let poToken, !poToken.isEmpty {
+        // PoToken is bound to visitorData; both are replaced by the account
+        // identity when a bearer token is attached.
+        if bearer == nil, let poToken, !poToken.isEmpty {
             body["serviceIntegrityDimensions"] = ["poToken": poToken]
         }
 
@@ -145,6 +172,7 @@ struct InnerTubeClient {
             data = try await post(path: "player",
                                   apiKey: client.apiKey,
                                   userAgent: client.userAgent,
+                                  authorization: bearer,
                                   body: body)
         } catch let APIError.badResponse(code) {
             return .httpError(code)
@@ -172,7 +200,7 @@ struct InnerTubeClient {
         return .noStream
     }
 
-    private func clientContext(for client: PlayerClient) -> [String: Any] {
+    private func clientContext(for client: PlayerClient, authenticated: Bool) -> [String: Any] {
         var dict: [String: Any] = [
             "clientName": client.clientName,
             "clientVersion": client.clientVersion,
@@ -180,25 +208,36 @@ struct InnerTubeClient {
             "gl": region
         ]
         dict.merge(client.extraContext) { _, new in new }
-        if let visitorData, !visitorData.isEmpty { dict["visitorData"] = visitorData }
+        if !authenticated, let visitorData, !visitorData.isEmpty {
+            dict["visitorData"] = visitorData
+        }
         return dict
     }
 
     // MARK: - Networking
 
-    private func post(path: String, apiKey: String, userAgent: String, body: [String: Any]) async throws -> Data {
+    private func post(path: String,
+                      apiKey: String?,
+                      userAgent: String,
+                      authorization: String? = nil,
+                      body: [String: Any]) async throws -> Data {
         var components = URLComponents(string: base + path)!
-        components.queryItems = [
-            URLQueryItem(name: "key", value: apiKey),
-            URLQueryItem(name: "prettyPrint", value: "false")
-        ]
+        var query = [URLQueryItem(name: "prettyPrint", value: "false")]
+        // The static key is dropped when a bearer token rides along — modern
+        // InnerTube doesn't need it, and key+OAuth together can trip refusals.
+        if let apiKey, authorization == nil {
+            query.insert(URLQueryItem(name: "key", value: apiKey), at: 0)
+        }
+        components.queryItems = query
 
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("2", forHTTPHeaderField: "X-Goog-Api-Format-Version")
-        if let visitorData, !visitorData.isEmpty {
+        if let authorization {
+            request.setValue("Bearer \(authorization)", forHTTPHeaderField: "Authorization")
+        } else if let visitorData, !visitorData.isEmpty {
             request.setValue(visitorData, forHTTPHeaderField: "X-Goog-Visitor-Id")
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -292,13 +331,19 @@ struct InnerTubeClient {
         return URL(string: urlString)
     }
 
+    /// The watch screen tops out well under 480p, so "best" means the sharpest
+    /// stream at or below the cap (360p with Data Saver on), falling back to
+    /// the smallest stream above it.
     private func bestProgressiveURL(_ formats: [PlayerResponse.Format]?) -> String? {
         guard let formats else { return nil }
-        return formats
-            .filter { $0.url != nil }
-            .sorted { ($0.height ?? .max) < ($1.height ?? .max) }
-            .first?
-            .url
+        let playable = formats.filter { $0.url != nil }
+        let cap = dataSaver ? 360 : 480
+        let below = playable
+            .filter { ($0.height ?? 0) <= cap }
+            .max { ($0.height ?? 0) < ($1.height ?? 0) }
+        let above = playable
+            .min { ($0.height ?? .max) < ($1.height ?? .max) }
+        return (below ?? above)?.url
     }
 }
 
@@ -309,27 +354,48 @@ private struct PlayerClient {
     let clientVersion: String
     let extraContext: [String: Any]
     let userAgent: String
-    let apiKey: String
+    let apiKey: String?
+    /// Whether this client accepts the TV-client OAuth bearer token.
+    let supportsAuth: Bool
 
-    /// PlayStation/TV client — streams via HLS, lightest bot-gating.
+    /// PlayStation/TV client — streams via HLS, lightest bot-gating, and the
+    /// natural home for the TV OAuth token when signed in.
     static let tvhtml5 = PlayerClient(
         clientName: "TVHTML5",
         clientVersion: "7.20250120.19.00",
         extraContext: [:],
         userAgent: "Mozilla/5.0 (PlayStation; PlayStation 4/12.00) AppleWebKit/605.1.15 (KHTML, like Gecko)",
-        apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+        apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+        supportsAuth: true
     )
 
     /// iOS client — yields HLS where allowed. Bump version + userAgent together.
     static let ios = PlayerClient(
         clientName: "IOS",
-        clientVersion: "19.45.4",
+        clientVersion: "20.10.4",
         extraContext: [
             "deviceMake": "Apple", "deviceModel": "iPhone16,2",
-            "osName": "iPhone", "osVersion": "17.5.1.21F90", "utcOffsetMinutes": 0
+            "osName": "iPhone", "osVersion": "18.3.2.22D82", "utcOffsetMinutes": 0
         ],
-        userAgent: "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)",
-        apiKey: "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc"
+        userAgent: "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+        apiKey: "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
+        supportsAuth: true
+    )
+
+    /// Quest VR client — keyless-only, but historically the least PoToken-gated
+    /// client, so it backstops the chain. Returns direct progressive URLs.
+    static let androidVR = PlayerClient(
+        clientName: "ANDROID_VR",
+        clientVersion: "1.62.27",
+        extraContext: [
+            "deviceMake": "Oculus", "deviceModel": "Quest 3",
+            "osName": "Android", "osVersion": "12L",
+            "androidSdkVersion": 32, "utcOffsetMinutes": 0
+        ],
+        userAgent: "com.google.android.apps.youtube.vr.oculus/1.62.27 "
+            + "(Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+        apiKey: nil,
+        supportsAuth: false
     )
 }
 

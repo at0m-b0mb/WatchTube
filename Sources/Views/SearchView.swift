@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Search tab: a field, live results, and tappable recent searches.
+/// Search tab: a field, a prominent go button, live results, and tappable
+/// recent searches.
 struct SearchView: View {
     @Environment(LibraryStore.self) private var library
     @State private var model = SearchViewModel()
@@ -14,7 +15,12 @@ struct SearchView: View {
                     .onSubmit(runSearch)
                 Button(action: runSearch) {
                     Label("Search", systemImage: "magnifyingglass")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                 .disabled(model.query.trimmingCharacters(in: .whitespaces).isEmpty)
             }
 
@@ -54,6 +60,7 @@ struct SearchView: View {
         }
         .navigationTitle("Search")
         .navigationDestination(for: Video.self) { PlayerView(video: $0) }
+        .brandBackdrop()
         .onAppear(perform: autoSearchIfRequested)
     }
 

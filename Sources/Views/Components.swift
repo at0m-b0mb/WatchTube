@@ -6,6 +6,7 @@ struct LoadingRow: View {
         HStack {
             Spacer()
             ProgressView()
+                .tint(.red)
             Spacer()
         }
         .padding(.vertical, 8)

@@ -7,7 +7,7 @@ struct VideoRowView: View {
     @Environment(LibraryStore.self) private var library
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 9) {
             ZStack(alignment: .bottomTrailing) {
                 AsyncImage(url: video.thumbnailURL) { phase in
                     switch phase {
@@ -19,8 +19,12 @@ struct VideoRowView: View {
                         placeholder(systemImage: "photo")
                     }
                 }
-                .frame(width: 62, height: 40)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .frame(width: 68, height: 42)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(.white.opacity(0.08))
+                )
 
                 if let length = video.lengthText {
                     Text(length)
@@ -36,7 +40,7 @@ struct VideoRowView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(video.title)
-                    .font(.caption)
+                    .font(.caption.weight(.medium))
                     .lineLimit(2)
                 Text(video.channelTitle)
                     .font(.caption2)

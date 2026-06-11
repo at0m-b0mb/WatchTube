@@ -6,6 +6,7 @@ enum APIError: LocalizedError {
     case badResponse(Int)
     case decoding(String)
     case notPlayable(String)   // YouTube returned a non-OK playabilityStatus
+    case loginRequired(String) // same, but signing in with Google would likely fix it
     case noStream              // no HLS manifest and no clean progressive URL
     case empty                 // search returned nothing
     case network(String)
@@ -16,7 +17,7 @@ enum APIError: LocalizedError {
             return "Server error (\(code)). Try again."
         case .decoding(let what):
             return "Couldn't read the response (\(what))."
-        case .notPlayable(let reason):
+        case .notPlayable(let reason), .loginRequired(let reason):
             return reason.isEmpty ? "This video can't be played." : reason
         case .noStream:
             return "No watch-playable stream found for this video."

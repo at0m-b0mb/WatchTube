@@ -1,11 +1,15 @@
 import SwiftUI
 import AVKit
 
-/// Plays the selected video over a blurred poster backdrop. Resolves a stream on
-/// appear, records it to history, and offers a favorite toggle + retry.
+/// Plays the selected video over a blurred poster backdrop. Resolves a stream
+/// on appear, records it to history, and offers a favorite toggle + retry.
+/// When YouTube demands verification, a Google sign-in shortcut appears right
+/// in the error state — and playback retries automatically after signing in.
 struct PlayerView: View {
     @Environment(LibraryStore.self) private var library
     @State private var model: PlayerViewModel
+
+    private var auth: GoogleAuth { .shared }
 
     init(video: Video) {
         _model = State(initialValue: PlayerViewModel(video: video))
@@ -17,12 +21,19 @@ struct PlayerView: View {
 
             switch model.phase {
             case .loading:
-                VStack(spacing: 8) {
+                VStack(spacing: 10) {
                     ProgressView()
-                    Text("Loading…")
+                        .controlSize(.large)
+                        .tint(.red)
+                    Text(model.title)
                         .font(.caption2)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                    Text("Finding stream…")
+                        .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
+                .padding()
 
             case .ready(let player):
                 VideoPlayer(player: player)
@@ -31,19 +42,43 @@ struct PlayerView: View {
             case .failed(let message):
                 ScrollView {
                     VStack(spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle")
+                        Image(systemName: model.needsSignIn
+                              ? "person.crop.circle.badge.exclamationmark"
+                              : "exclamationmark.triangle")
                             .font(.title3)
                             .foregroundStyle(.yellow)
                         Text(message)
                             .font(.footnote)
                             .multilineTextAlignment(.center)
-                        Button {
-                            model.retry()
-                        } label: {
-                            Label("Retry", systemImage: "arrow.clockwise")
+
+                        if model.needsSignIn {
+                            NavigationLink {
+                                GoogleSignInView()
+                            } label: {
+                                Label("Sign in with Google", systemImage: "person.crop.circle.badge.plus")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.blue)
+
+                            Button {
+                                model.retry()
+                            } label: {
+                                Label("Retry", systemImage: "arrow.clockwise")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.red)
+                        } else {
+                            Button {
+                                model.retry()
+                            } label: {
+                                Label("Retry", systemImage: "arrow.clockwise")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
                     }
                     .padding()
                 }
@@ -64,6 +99,11 @@ struct PlayerView: View {
         .onAppear {
             library.recordWatch(model.video)
             model.loadIfNeeded()
+            // Coming back from a successful sign-in: retry without making the
+            // user hunt for the button.
+            if case .failed = model.phase, model.needsSignIn, auth.isSignedIn {
+                model.retry()
+            }
         }
     }
 

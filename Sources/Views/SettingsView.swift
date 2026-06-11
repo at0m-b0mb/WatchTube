@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Playback prefs, region/language, optional advanced auth, library controls,
-/// and a plain statement of the privacy posture.
+/// Account (optional Google sign-in), playback prefs, region/language,
+/// advanced auth, library controls, provisioning expiry, and a plain statement
+/// of the privacy posture.
 struct SettingsView: View {
     @Environment(LibraryStore.self) private var library
     @AppStorage("hl") private var language = "en"
@@ -12,8 +13,35 @@ struct SettingsView: View {
     @State private var visitorData = KeychainStore.get(KeychainStore.Keys.visitorData) ?? ""
     @State private var savedNote: String?
 
+    private var auth: GoogleAuth { .shared }
+
     var body: some View {
         List {
+            Section {
+                if auth.isSignedIn {
+                    Label("Signed in with Google", systemImage: "checkmark.seal.fill")
+                        .foregroundStyle(.green)
+                    Button(role: .destructive) {
+                        auth.signOut()
+                        Haptics.tap()
+                    } label: {
+                        Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                } else {
+                    NavigationLink {
+                        GoogleSignInView()
+                    } label: {
+                        Label("Sign in with Google", systemImage: "person.crop.circle.badge.plus")
+                    }
+                }
+            } header: {
+                Text("Account")
+            } footer: {
+                Text(auth.isSignedIn
+                     ? "Playback uses your YouTube account, which unlocks videos that refuse to play anonymously. The token only grants YouTube access — never email or anything else."
+                     : "Optional. Signing in unlocks videos that refuse to play anonymously. Access is YouTube-only; signed out, the app stays fully keyless.")
+            }
+
             Section {
                 Toggle(isOn: $dataSaver) {
                     Label("Data Saver", systemImage: "antenna.radiowaves.left.and.right")
@@ -39,7 +67,7 @@ struct SettingsView: View {
             } header: {
                 Text("Advanced")
             } footer: {
-                Text("Optional. Only needed if certain videos refuse to play. Stored encrypted in the Keychain — never sent anywhere except YouTube.")
+                Text("Optional, and usually unnecessary when signed in. Stored encrypted in the Keychain — never sent anywhere except YouTube.")
             }
 
             Section("Library") {
@@ -52,13 +80,13 @@ struct SettingsView: View {
             }
 
             Section {
-                Label("No accounts, no sign-in", systemImage: "person.crop.circle.badge.xmark")
+                Label("Sign-in optional, keyless by default", systemImage: "person.crop.circle.badge.questionmark")
                 Label("No analytics or tracking", systemImage: "eye.slash")
                 Label("HTTPS only (ATS enforced)", systemImage: "lock.fill")
             } header: {
                 Text("Privacy")
             } footer: {
-                Text("Searches and playback talk directly to YouTube. WatchTube keeps no history off-device and phones no home.")
+                Text("Searches and playback talk directly to YouTube. Tokens stay in the Keychain, history stays on the watch, and WatchTube phones no home.")
             }
 
             Section {
@@ -68,14 +96,49 @@ struct SettingsView: View {
                     Text(version).foregroundStyle(.secondary)
                 }
                 .font(.caption2)
+                expiryRow
             }
         }
         .navigationTitle("Settings")
+        .brandBackdrop()
     }
 
     private var version: String {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
         return "v\(v)"
+    }
+
+    @ViewBuilder private var expiryRow: some View {
+        let info = ProvisioningInfo.self
+        HStack {
+            Image(systemName: expiryIcon)
+                .foregroundStyle(expiryColor)
+                .font(.caption2)
+            Text(info.summary)
+                .font(.caption2)
+            Spacer()
+            if !info.isPaid {
+                Text("Free ID")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var expiryColor: Color {
+        switch ProvisioningInfo.urgency {
+        case .ok: .green
+        case .soon: .yellow
+        case .expired: .red
+        }
+    }
+
+    private var expiryIcon: String {
+        switch ProvisioningInfo.urgency {
+        case .ok: "checkmark.shield"
+        case .soon: "exclamationmark.shield"
+        case .expired: "xmark.shield"
+        }
     }
 
     private func save() {

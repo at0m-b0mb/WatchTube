@@ -11,7 +11,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.1"
+    MARKETING_VERSION: "1.2"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"            # Swift 5 language mode = fewer strict-concurrency speed bumps
     # DEVELOPMENT_TEAM: ABCDE12345  # <- set your Apple Developer Team ID here, or pick it in Xcode > Signing

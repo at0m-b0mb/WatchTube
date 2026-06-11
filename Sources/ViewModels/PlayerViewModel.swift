@@ -14,6 +14,9 @@ final class PlayerViewModel {
 
     private(set) var phase: Phase = .loading
     private(set) var title: String
+    /// True when the failure is the kind a Google sign-in would likely fix —
+    /// the player offers a sign-in shortcut next to Retry.
+    private(set) var needsSignIn = false
     let video: Video
 
     @ObservationIgnored private var hasStarted = false
@@ -36,6 +39,7 @@ final class PlayerViewModel {
 
     private func resolveAndPlay() async {
         configureAudioSession()
+        needsSignIn = false
         do {
             let resolution = try await AppClient.make().resolveStream(videoId: video.id)
             if !resolution.title.isEmpty { title = resolution.title }
@@ -50,6 +54,9 @@ final class PlayerViewModel {
             player.play()
             Haptics.success()
         } catch {
+            if case .loginRequired = error as? APIError {
+                needsSignIn = !GoogleAuth.shared.isSignedIn
+            }
             phase = .failed((error as? APIError)?.errorDescription ?? error.localizedDescription)
             Haptics.warn()
         }

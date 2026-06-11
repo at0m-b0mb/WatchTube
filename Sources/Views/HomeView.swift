@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Landing screen: pick up where you left off, then a Trending shelf. A gear in
-/// the top bar opens Settings.
+/// Landing screen: pick up where you left off, then a Trending shelf of
+/// poster cards. A gear in the top bar opens Settings.
 struct HomeView: View {
     @Environment(LibraryStore.self) private var library
     @State private var model = HomeViewModel()
@@ -9,27 +9,35 @@ struct HomeView: View {
     var body: some View {
         List {
             if !library.history.isEmpty {
-                Section("Continue Watching") {
-                    ForEach(library.history.prefix(4)) { video in
+                Section {
+                    ForEach(library.history.prefix(3)) { video in
                         NavigationLink(value: video) { VideoRowView(video: video) }
                     }
+                } header: {
+                    Label("Continue Watching", systemImage: "play.circle.fill")
                 }
             }
 
-            Section("Trending") {
+            Section {
                 if model.isLoading && model.trending.isEmpty {
                     LoadingRow()
                 } else if let error = model.errorMessage, model.trending.isEmpty {
                     EmptyStateRow(icon: "wifi.exclamationmark", text: error)
                 } else {
                     ForEach(model.trending) { video in
-                        NavigationLink(value: video) { VideoRowView(video: video) }
+                        NavigationLink(value: video) { VideoCardView(video: video) }
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                     }
                 }
+            } header: {
+                Label("Trending", systemImage: "flame.fill")
+                    .foregroundStyle(.red)
             }
         }
         .navigationTitle("WatchTube")
         .navigationDestination(for: Video.self) { PlayerView(video: $0) }
+        .brandBackdrop()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink { SettingsView() } label: {
