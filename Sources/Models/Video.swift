@@ -13,6 +13,8 @@ struct Video: Identifiable, Hashable, Codable {
     var channelId: String? = nil   // UC… id, when known — powers channel pages
     var isShort: Bool = false      // vertical Short, played full-screen
     var viewCount: String? = nil   // "1.2M views" when available
+    var channelAvatarURL: URL? = nil
+    var publishedText: String? = nil  // "2 days ago", "3 weeks ago"
 
     /// The canonical watch URL — handy for "open on iPhone" handoff later.
     var watchURL: URL? {

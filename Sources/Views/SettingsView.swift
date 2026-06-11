@@ -1,13 +1,12 @@
 import SwiftUI
 
-/// Account (optional Google sign-in), playback prefs, region/language,
-/// advanced auth, library controls, provisioning expiry, and a plain statement
-/// of the privacy posture.
 struct SettingsView: View {
     @Environment(LibraryStore.self) private var library
     @AppStorage("hl") private var language = "en"
     @AppStorage("gl") private var region = "US"
     @AppStorage("dataSaver") private var dataSaver = false
+    @AppStorage("autoplay") private var autoplay = true
+    @AppStorage("defaultSpeed") private var defaultSpeed = 1.0
 
     @State private var poToken = KeychainStore.get(KeychainStore.Keys.poToken) ?? ""
     @State private var visitorData = KeychainStore.get(KeychainStore.Keys.visitorData) ?? ""
@@ -38,7 +37,7 @@ struct SettingsView: View {
                 Text("Account")
             } footer: {
                 Text(auth.isSignedIn
-                     ? "Playback uses your YouTube account, which unlocks videos that refuse to play anonymously. The token only grants YouTube access — never email or anything else."
+                     ? "Playback uses your YouTube account, which unlocks videos that refuse to play anonymously. The token only grants YouTube access \u{2014} never email or anything else."
                      : "Optional. Signing in unlocks videos that refuse to play anonymously. Access is YouTube-only; signed out, the app stays fully keyless.")
             }
 
@@ -46,10 +45,22 @@ struct SettingsView: View {
                 Toggle(isOn: $dataSaver) {
                     Label("Data Saver", systemImage: "antenna.radiowaves.left.and.right")
                 }
+                Toggle(isOn: $autoplay) {
+                    Label("Autoplay Next", systemImage: "play.fill")
+                }
+                Picker(selection: $defaultSpeed) {
+                    Text("0.75x").tag(0.75)
+                    Text("Normal").tag(1.0)
+                    Text("1.25x").tag(1.25)
+                    Text("1.5x").tag(1.5)
+                    Text("2x").tag(2.0)
+                } label: {
+                    Label("Default Speed", systemImage: "gauge.with.dots.needle.33percent")
+                }
             } header: {
                 Text("Playback")
             } footer: {
-                Text("Caps video to ~0.9 Mbps to save cellular data and battery.")
+                Text("Data Saver caps video to ~0.9 Mbps. Default Speed applies when starting a new video.")
             }
 
             Section("Region") {
@@ -67,7 +78,7 @@ struct SettingsView: View {
             } header: {
                 Text("Advanced")
             } footer: {
-                Text("Optional, and usually unnecessary when signed in. Stored encrypted in the Keychain — never sent anywhere except YouTube.")
+                Text("Optional, and usually unnecessary when signed in. Stored encrypted in the Keychain \u{2014} never sent anywhere except YouTube.")
             }
 
             Section("Library") {
@@ -76,6 +87,18 @@ struct SettingsView: View {
                     Haptics.tap()
                 } label: {
                     Label("Clear History", systemImage: "clock.arrow.circlepath")
+                }
+                Button(role: .destructive) {
+                    library.clearRecentSearches()
+                    Haptics.tap()
+                } label: {
+                    Label("Clear Recent Searches", systemImage: "magnifyingglass")
+                }
+                Button(role: .destructive) {
+                    library.clearQueue()
+                    Haptics.tap()
+                } label: {
+                    Label("Clear Queue", systemImage: "text.badge.minus")
                 }
             }
 

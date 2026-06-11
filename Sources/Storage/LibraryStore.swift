@@ -11,11 +11,13 @@ final class LibraryStore {
     private(set) var favorites: [Video] = []
     private(set) var history: [Video] = []
     private(set) var recentSearches: [String] = []
+    private(set) var queue: [Video] = []
 
     @ObservationIgnored private let defaults = UserDefaults.standard
     private let favKey = "library.favorites"
     private let histKey = "library.history"
     private let searchKey = "library.recentSearches"
+    private let queueKey = "library.queue"
     private let maxHistory = 50
     private let maxSearches = 12
 
@@ -25,11 +27,13 @@ final class LibraryStore {
             favorites = Array(SampleData.videos.prefix(4))
             history = SampleData.videos
             recentSearches = SampleData.searches
+            queue = Array(SampleData.videos.prefix(2))
             return
         }
         favorites = loadVideos(favKey)
         history = loadVideos(histKey)
         recentSearches = defaults.stringArray(forKey: searchKey) ?? []
+        queue = loadVideos(queueKey)
     }
 
     // MARK: Favorites
@@ -64,6 +68,31 @@ final class LibraryStore {
     func clearHistory() {
         history = []
         saveVideos(history, histKey)
+    }
+
+    // MARK: Queue (Watch Later)
+
+    func isQueued(_ video: Video) -> Bool {
+        queue.contains { $0.id == video.id }
+    }
+
+    func toggleQueue(_ video: Video) {
+        if let idx = queue.firstIndex(where: { $0.id == video.id }) {
+            queue.remove(at: idx)
+        } else {
+            queue.append(video)
+        }
+        saveVideos(queue, queueKey)
+    }
+
+    func removeFromQueue(_ video: Video) {
+        queue.removeAll { $0.id == video.id }
+        saveVideos(queue, queueKey)
+    }
+
+    func clearQueue() {
+        queue = []
+        saveVideos(queue, queueKey)
     }
 
     // MARK: Recent searches

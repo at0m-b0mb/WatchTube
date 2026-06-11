@@ -31,18 +31,30 @@ struct VideoRowView: View {
                 Text(video.title)
                     .font(.caption.weight(.medium))
                     .lineLimit(2)
-                if !video.channelTitle.isEmpty {
-                    Text(video.channelTitle)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                HStack(spacing: 5) {
+                    if video.channelAvatarURL != nil {
+                        ThumbnailView(url: video.channelAvatarURL)
+                            .frame(width: 14, height: 14)
+                            .clipShape(Circle())
+                    }
+                    if !video.channelTitle.isEmpty {
+                        Text(video.channelTitle)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
-                if let views = video.viewCount {
-                    Text(views)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
+                HStack(spacing: 4) {
+                    if let views = video.viewCount {
+                        Text(views).lineLimit(1)
+                    }
+                    if let pub = video.publishedText {
+                        if video.viewCount != nil { Text("\u{00B7}") }
+                        Text(pub).lineLimit(1)
+                    }
                 }
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
             }
 
             if library.isFavorite(video) {

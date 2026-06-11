@@ -1,10 +1,6 @@
 import SwiftUI
 import AVKit
 
-/// Plays the selected video, then lets you scroll to a "View Channel" shortcut
-/// and an "Up Next" rail of related videos. Resolves a stream on appear, records
-/// it to history, and offers a favorite toggle + retry. When YouTube demands
-/// verification, a Google sign-in shortcut appears right in the error state.
 struct PlayerView: View {
     @Environment(LibraryStore.self) private var library
     @State private var model: PlayerViewModel
@@ -34,6 +30,8 @@ struct PlayerView: View {
                                     .strokeBorder(.white.opacity(0.08))
                             )
 
+                        videoInfo
+                        actionButtons
                         channelLink
                         upNext
                     }
@@ -66,6 +64,74 @@ struct PlayerView: View {
         }
     }
 
+    // MARK: - Video info bar
+
+    private var videoInfo: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                if model.video.channelAvatarURL != nil {
+                    ThumbnailView(url: model.video.channelAvatarURL)
+                        .frame(width: 24, height: 24)
+                        .clipShape(Circle())
+                        .overlay(Circle().strokeBorder(.white.opacity(0.2), lineWidth: 0.5))
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.video.channelTitle.isEmpty ? "Unknown" : model.video.channelTitle)
+                        .font(.caption2.weight(.medium))
+                        .lineLimit(1)
+                    if let views = model.video.viewCount {
+                        Text(views)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
+    // MARK: - Action buttons
+
+    private var actionButtons: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                NavigationLink {
+                    DescriptionView(video: model.video)
+                } label: {
+                    Label("Description", systemImage: "doc.text")
+                }
+
+                NavigationLink {
+                    CommentsView(videoId: model.video.id)
+                } label: {
+                    Label("Comments", systemImage: "text.bubble")
+                }
+
+                Button {
+                    library.toggleQueue(model.video)
+                    Haptics.tap()
+                } label: {
+                    Label(library.isQueued(model.video) ? "Queued" : "Queue",
+                          systemImage: library.isQueued(model.video) ? "text.badge.checkmark" : "text.badge.plus")
+                }
+
+                if case .ready = model.phase {
+                    NavigationLink {
+                        SpeedPickerView(model: model)
+                    } label: {
+                        Label(model.currentSpeed == 1.0 ? "Speed" : "\(model.currentSpeed, specifier: "%.2g")x",
+                              systemImage: "gauge.with.dots.needle.33percent")
+                    }
+                }
+            }
+            .buttonStyle(.bordered)
+            .tint(.gray)
+            .font(.caption2)
+        }
+        .padding(.horizontal, 4)
+    }
+
     // MARK: - Pieces
 
     private var loadingView: some View {
@@ -77,7 +143,7 @@ struct PlayerView: View {
                 .font(.caption2)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
-            Text("Finding stream…")
+            Text("Finding stream\u{2026}")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
         }
@@ -86,12 +152,27 @@ struct PlayerView: View {
 
     @ViewBuilder private var channelLink: some View {
         if let channelId = model.video.channelId, !channelId.isEmpty {
-            NavigationLink(value: ChannelRef(id: channelId, title: model.video.channelTitle)) {
-                Label(model.video.channelTitle.isEmpty ? "View Channel" : model.video.channelTitle,
-                      systemImage: "person.crop.circle")
-                    .font(.caption)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            NavigationLink(value: ChannelRef(id: channelId,
+                                             title: model.video.channelTitle,
+                                             avatarURL: model.video.channelAvatarURL)) {
+                HStack(spacing: 8) {
+                    if model.video.channelAvatarURL != nil {
+                        ThumbnailView(url: model.video.channelAvatarURL)
+                            .frame(width: 28, height: 28)
+                            .clipShape(Circle())
+                    } else {
+                        Image(systemName: "person.crop.circle")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(model.video.channelTitle.isEmpty ? "View Channel" : model.video.channelTitle)
+                        .font(.caption)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
             .buttonStyle(.bordered)
             .tint(.gray)
@@ -137,7 +218,6 @@ struct PlayerView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.blue)
 
-                    // Secondary when a sign-in button is already the primary CTA.
                     Button { model.retry() } label: {
                         Label("Retry", systemImage: "arrow.clockwise")
                             .frame(maxWidth: .infinity)

@@ -14,11 +14,9 @@ final class PlayerViewModel {
 
     private(set) var phase: Phase = .loading
     private(set) var title: String
-    /// True when the failure is the kind a Google sign-in would likely fix —
-    /// the player offers a sign-in shortcut next to Retry.
     private(set) var needsSignIn = false
-    /// Related videos shown under the player as "Up Next".
     private(set) var related: [Video] = []
+    var currentSpeed: Double = 1.0
     let video: Video
 
     @ObservationIgnored private var hasStarted = false
@@ -39,6 +37,13 @@ final class PlayerViewModel {
         // Best-effort — Up Next is a bonus rail, never blocks playback.
         if let videos = try? await AppClient.make().relatedVideos(to: video.id) {
             related = videos
+        }
+    }
+
+    func setSpeed(_ speed: Double) {
+        currentSpeed = speed
+        if case .ready(let player) = phase {
+            player.rate = Float(speed)
         }
     }
 

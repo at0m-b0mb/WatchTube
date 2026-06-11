@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// Library tab: your YouTube account feeds (when signed in) plus the on-device
-/// Favorites and Watch History.
 struct LibraryView: View {
     @Environment(LibraryStore.self) private var library
     private var auth: GoogleAuth { .shared }
@@ -21,6 +19,31 @@ struct LibraryView: View {
                     Label("Your YouTube", systemImage: "play.circle")
                 } footer: {
                     Text("Pulled live from your account. These feeds aren't always shared with non-official clients, so they may come up empty.")
+                }
+            }
+
+            Section("Queue") {
+                if library.queue.isEmpty {
+                    EmptyStateRow(icon: "text.badge.plus", text: "Add videos to your queue to watch later.")
+                } else {
+                    ForEach(library.queue) { video in
+                        NavigationLink(value: video) { VideoRowView(video: video) }
+                            .swipeActions {
+                                Button(role: .destructive) {
+                                    library.removeFromQueue(video)
+                                } label: {
+                                    Image(systemName: "minus.circle")
+                                }
+                            }
+                    }
+                    if library.queue.count > 1 {
+                        Button(role: .destructive) {
+                            library.clearQueue()
+                            Haptics.tap()
+                        } label: {
+                            Label("Clear Queue", systemImage: "trash")
+                        }
+                    }
                 }
             }
 

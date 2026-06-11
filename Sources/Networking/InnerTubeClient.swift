@@ -186,6 +186,208 @@ struct InnerTubeClient {
         }
     }
 
+    // MARK: - Comments
+
+    func comments(videoId: String) async throws -> [Comment] {
+        let data = try await post(path: "next",
+                                  apiKey: Self.webKey,
+                                  userAgent: webUserAgent,
+                                  body: ["context": webContext, "videoId": videoId])
+        let root = try jsonRoot(data)
+        return extractComments(from: root)
+    }
+
+    private func extractComments(from root: Any) -> [Comment] {
+        var results: [Comment] = []
+        func walk(_ node: Any) {
+            if let dict = node as? [String: Any] {
+                if let renderer = dict["commentRenderer"] as? [String: Any] {
+                    if let comment = mapComment(renderer) { results.append(comment) }
+                }
+                if results.count >= 20 { return }
+                for value in dict.values { walk(value); if results.count >= 20 { return } }
+            } else if let array = node as? [Any] {
+                for value in array { walk(value); if results.count >= 20 { return } }
+            }
+        }
+        walk(root)
+        return results
+    }
+
+    private func mapComment(_ renderer: [String: Any]) -> Comment? {
+        guard let id = renderer["commentId"] as? String else { return nil }
+        let author = text(renderer["authorText"]) ?? "Unknown"
+        let body = text(renderer["contentText"]) ?? ""
+        guard !body.isEmpty else { return nil }
+        let likes = text(renderer["voteCount"])
+        let published = text(renderer["publishedTimeText"])
+        let avatarURL: URL? = {
+            guard let thumbs = (renderer["authorThumbnail"] as? [String: Any])?["thumbnails"] as? [[String: Any]],
+                  let urlStr = thumbs.first?["url"] as? String else { return nil }
+            let full = urlStr.hasPrefix("//") ? "https:\(urlStr)" : urlStr
+            return URL(string: full)
+        }()
+        let hearted = renderer["creatorHeart"] != nil
+            || (renderer["actionButtons"] as? [String: Any])?["commentActionButtonsRenderer"] != nil
+                && renderer["isHearted"] as? Bool == true
+        return Comment(id: id, author: author, authorAvatarURL: avatarURL,
+                       text: body, likeCount: likes, publishedText: published, isHearted: hearted)
+    }
+
+    // MARK: - Video description + details
+
+    struct VideoDetail {
+        let description: String
+        let likeCount: String?
+        let dateText: String?
+        let subscriberCount: String?
+    }
+
+    func videoDetails(videoId: String) async throws -> VideoDetail {
+        let data = try await post(path: "next",
+                                  apiKey: Self.webKey,
+                                  userAgent: webUserAgent,
+                                  body: ["context": webContext, "videoId": videoId])
+        let root = try jsonRoot(data) as? [String: Any] ?? [:]
+        return extractVideoDetail(from: root)
+    }
+
+    private func extractVideoDetail(from root: [String: Any]) -> VideoDetail {
+        var desc = ""
+        var likes: String?
+        var dateText: String?
+        var subCount: String?
+
+        func walk(_ node: Any) {
+            guard let dict = node as? [String: Any] else {
+                if let arr = node as? [Any] { for v in arr { walk(v) } }
+                return
+            }
+            if let structured = dict["structuredDescriptionContentRenderer"] as? [String: Any],
+               let items = structured["items"] as? [[String: Any]] {
+                for item in items {
+                    if let descRenderer = item["expandableVideoDescriptionBodyRenderer"] as? [String: Any] {
+                        desc = text(descRenderer["descriptionBodyText"]) ?? text(descRenderer["attributedDescriptionBodyText"]) ?? ""
+                    } else if let videoDesc = item["videoDescriptionHeaderRenderer"] as? [String: Any] {
+                        dateText = text(videoDesc["publishDate"]) ?? text(videoDesc["factoid"])
+                        likes = text(videoDesc["views"])
+                    }
+                }
+            }
+            if let vps = dict["videoPrimaryInfoRenderer"] as? [String: Any] {
+                dateText = dateText ?? text(vps["dateText"])
+                if let sentimentBar = vps["sentimentBar"] as? [String: Any],
+                   let sbr = sentimentBar["sentimentBarRenderer"] as? [String: Any] {
+                    likes = text(sbr["tooltip"])
+                }
+            }
+            if let vsi = dict["videoSecondaryInfoRenderer"] as? [String: Any] {
+                if desc.isEmpty { desc = text(vsi["description"]) ?? "" }
+                if let owner = vsi["owner"] as? [String: Any],
+                   let ownerRend = owner["videoOwnerRenderer"] as? [String: Any] {
+                    subCount = text(ownerRend["subscriberCountText"])
+                }
+            }
+            for v in dict.values { walk(v) }
+        }
+        walk(root)
+        return VideoDetail(description: desc, likeCount: likes, dateText: dateText, subscriberCount: subCount)
+    }
+
+    // MARK: - Channel header
+
+    struct ChannelHeader {
+        let avatarURL: URL?
+        let subscriberCount: String?
+        let videoCount: String?
+        let description: String?
+        let bannerURL: URL?
+    }
+
+    func channelHeader(channelId: String) async throws -> ChannelHeader {
+        let data = try await post(path: "browse",
+                                  apiKey: Self.webKey,
+                                  userAgent: webUserAgent,
+                                  body: ["context": webContext, "browseId": channelId])
+        let root = try jsonRoot(data) as? [String: Any] ?? [:]
+        return extractChannelHeader(from: root)
+    }
+
+    private func extractChannelHeader(from root: [String: Any]) -> ChannelHeader {
+        var avatar: URL?
+        var subs: String?
+        var videoCount: String?
+        var desc: String?
+        var banner: URL?
+
+        func walk(_ node: Any) {
+            guard let dict = node as? [String: Any] else {
+                if let arr = node as? [Any] { for v in arr { walk(v) } }
+                return
+            }
+            if let header = dict["c4TabbedHeaderRenderer"] as? [String: Any] {
+                if let thumbs = (header["avatar"] as? [String: Any])?["thumbnails"] as? [[String: Any]],
+                   let url = thumbs.last?["url"] as? String {
+                    avatar = URL(string: url.hasPrefix("//") ? "https:\(url)" : url)
+                }
+                subs = text(header["subscriberCountText"])
+                videoCount = text(header["videosCountText"])
+                if let bannerImg = (header["banner"] as? [String: Any])?["thumbnails"] as? [[String: Any]],
+                   let bUrl = bannerImg.last?["url"] as? String {
+                    banner = URL(string: bUrl.hasPrefix("//") ? "https:\(bUrl)" : bUrl)
+                }
+            }
+            if let pageHeader = dict["pageHeaderRenderer"] as? [String: Any] {
+                if let content = pageHeader["content"] as? [String: Any],
+                   let pageVM = content["pageHeaderViewModel"] as? [String: Any] {
+                    if let img = (pageVM["image"] as? [String: Any])?["decoratedAvatarViewModel"] as? [String: Any],
+                       let avatarVM = img["avatar"] as? [String: Any],
+                       let avatarImg = (avatarVM["avatarViewModel"] as? [String: Any])?["image"] as? [String: Any],
+                       let sources = avatarImg["sources"] as? [[String: Any]],
+                       let url = sources.last?["url"] as? String {
+                        avatar = URL(string: url.hasPrefix("//") ? "https:\(url)" : url)
+                    }
+                    if let meta = pageVM["metadata"] as? [String: Any],
+                       let contentMeta = meta["contentMetadataViewModel"] as? [String: Any],
+                       let rows = contentMeta["metadataRows"] as? [[String: Any]] {
+                        for row in rows {
+                            guard let parts = row["metadataParts"] as? [[String: Any]] else { continue }
+                            for part in parts {
+                                guard let t = (part["text"] as? [String: Any])?["content"] as? String else { continue }
+                                if t.lowercased().contains("subscriber") { subs = t }
+                                else if t.lowercased().contains("video") { videoCount = t }
+                            }
+                        }
+                    }
+                    if let descNode = pageVM["description"] as? [String: Any] {
+                        desc = (descNode["descriptionPreviewViewModel"] as? [String: Any])
+                            .flatMap { ($0["description"] as? [String: Any])?["content"] as? String }
+                            ?? descNode["content"] as? String
+                    }
+                }
+            }
+            if let aboutRenderer = dict["channelAboutFullMetadataRenderer"] as? [String: Any] {
+                desc = desc ?? text(aboutRenderer["description"])
+            }
+            for v in dict.values { walk(v) }
+        }
+        walk(root)
+        return ChannelHeader(avatarURL: avatar, subscriberCount: subs, videoCount: videoCount,
+                             description: desc, bannerURL: banner)
+    }
+
+    // MARK: - Playlists
+
+    func playlistVideos(playlistId: String) async throws -> [Video] {
+        let data = try await post(path: "browse",
+                                  apiKey: Self.webKey,
+                                  userAgent: webUserAgent,
+                                  body: ["context": webContext, "browseId": "VL\(playlistId)"])
+        let videos = try parseVideos(from: data)
+        if videos.isEmpty { throw APIError.empty }
+        return videos
+    }
+
     private var webContext: [String: Any] {
         ["client": ["clientName": "WEB", "clientVersion": webClientVersion,
                     "hl": language, "gl": region]]
@@ -435,6 +637,8 @@ struct InnerTubeClient {
             ?? text(renderer["shortBylineText"])
             ?? ""
         let views = text(renderer["shortViewCountText"]) ?? text(renderer["viewCountText"])
+        let published = text(renderer["publishedTimeText"])
+        let avatar = channelAvatarURL(in: renderer)
         return Video(
             id: id,
             title: title,
@@ -442,7 +646,9 @@ struct InnerTubeClient {
             thumbnailURL: Video.thumbnailURL(forVideoId: id),
             lengthText: text(renderer["lengthText"]),
             channelId: channelId(in: renderer),
-            viewCount: views
+            viewCount: views,
+            channelAvatarURL: avatar,
+            publishedText: published
         )
     }
 
@@ -453,34 +659,53 @@ struct InnerTubeClient {
         let title = (metadata?["title"] as? [String: Any])?["content"] as? String ?? "Untitled"
 
         let thumb = Video.thumbnailURL(forVideoId: id)
-        let (channel, views) = lockupMetadataTexts(metadata)
+        let parsed = lockupMetadataTexts(metadata)
         let duration = lockupDuration(vm)
+        let avatar = lockupAvatarURL(metadata)
 
         return Video(
             id: id,
             title: title,
-            channelTitle: channel,
+            channelTitle: parsed.channel,
             thumbnailURL: thumb,
             lengthText: duration,
-            viewCount: views
+            viewCount: parsed.views,
+            channelAvatarURL: avatar,
+            publishedText: parsed.published
         )
     }
 
-    private func lockupMetadataTexts(_ metadata: [String: Any]?) -> (channel: String, views: String?) {
-        guard let meta = metadata?["metadata"] as? [String: Any],
-              let content = meta["contentMetadataViewModel"] as? [String: Any],
-              let rows = content["metadataRows"] as? [[String: Any]] else { return ("", nil) }
+    private struct LockupMeta {
         var channel = ""
         var views: String?
+        var published: String?
+    }
+
+    private func lockupMetadataTexts(_ metadata: [String: Any]?) -> LockupMeta {
+        guard let meta = metadata?["metadata"] as? [String: Any],
+              let content = meta["contentMetadataViewModel"] as? [String: Any],
+              let rows = content["metadataRows"] as? [[String: Any]] else { return LockupMeta() }
+        var result = LockupMeta()
         for row in rows {
             guard let parts = row["metadataParts"] as? [[String: Any]] else { continue }
             for part in parts {
                 guard let t = (part["text"] as? [String: Any])?["content"] as? String else { continue }
-                if channel.isEmpty { channel = t }
-                else if views == nil, t.lowercased().contains("view") { views = t }
+                if result.channel.isEmpty { result.channel = t }
+                else if result.views == nil, t.lowercased().contains("view") { result.views = t }
+                else if result.published == nil, t.lowercased().contains("ago") { result.published = t }
             }
         }
-        return (channel, views)
+        return result
+    }
+
+    private func lockupAvatarURL(_ metadata: [String: Any]?) -> URL? {
+        guard let avatar = metadata?["image"] as? [String: Any] else { return nil }
+        if let sources = avatar["sources"] as? [[String: Any]],
+           let urlStr = sources.first?["url"] as? String {
+            let full = urlStr.hasPrefix("//") ? "https:\(urlStr)" : urlStr
+            return URL(string: full)
+        }
+        return nil
     }
 
     private func lockupDuration(_ vm: [String: Any]) -> String? {
@@ -521,6 +746,18 @@ struct InnerTubeClient {
             lengthText: nil,
             isShort: true
         )
+    }
+
+    private func channelAvatarURL(in renderer: [String: Any]) -> URL? {
+        let thumbs = (renderer["channelThumbnailSupportedRenderers"] as? [String: Any])
+            .flatMap { $0["channelThumbnailWithLinkRenderer"] as? [String: Any] }
+            .flatMap { $0["thumbnail"] as? [String: Any] }
+            .flatMap { $0["thumbnails"] as? [[String: Any]] }
+        ?? (renderer["channelThumbnail"] as? [String: Any])
+            .flatMap { $0["thumbnails"] as? [[String: Any]] }
+        guard let url = thumbs?.first?["url"] as? String else { return nil }
+        let full = url.hasPrefix("//") ? "https:\(url)" : url
+        return URL(string: full)
     }
 
     private func text(_ node: Any?) -> String? {

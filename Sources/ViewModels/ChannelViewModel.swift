@@ -1,11 +1,11 @@
 import Foundation
 import Observation
 
-/// Loads a single channel's uploads.
 @MainActor
 @Observable
 final class ChannelViewModel {
     private(set) var videos: [Video] = []
+    private(set) var header: InnerTubeClient.ChannelHeader?
     private(set) var isLoading = false
     private(set) var errorMessage: String?
 
@@ -23,12 +23,16 @@ final class ChannelViewModel {
     func reload() async {
         isLoading = true
         errorMessage = nil
-        do {
-            videos = try await AppClient.make().channelVideos(channelId: channelId)
-        } catch {
-            videos = []
-            errorMessage = (error as? APIError)?.errorDescription
-                ?? "Couldn't load this channel."
+        let client = await AppClient.make()
+        async let headerFetch: InnerTubeClient.ChannelHeader? = try? client.channelHeader(channelId: channelId)
+        async let videosFetch: [Video] = { do { return try await client.channelVideos(channelId: channelId) } catch { return [] } }()
+
+        header = await headerFetch
+        let vids = await videosFetch
+        if vids.isEmpty && videos.isEmpty {
+            errorMessage = "Couldn't load this channel."
+        } else if !vids.isEmpty {
+            videos = vids
         }
         isLoading = false
     }

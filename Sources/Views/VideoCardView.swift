@@ -15,25 +15,38 @@ struct VideoCardView: View {
                 startPoint: .top, endPoint: .bottom
             )
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(video.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
-                HStack(spacing: 4) {
-                    if !video.channelTitle.isEmpty {
-                        Text(video.channelTitle).lineLimit(1)
-                    }
-                    if let views = video.viewCount, !video.channelTitle.isEmpty {
-                        Text("\u{00B7}")
-                        Text(views).lineLimit(1)
-                    } else if let views = video.viewCount {
-                        Text(views).lineLimit(1)
-                    }
+            HStack(alignment: .bottom, spacing: 7) {
+                if video.channelAvatarURL != nil {
+                    ThumbnailView(url: video.channelAvatarURL)
+                        .frame(width: 22, height: 22)
+                        .clipShape(Circle())
+                        .overlay(Circle().strokeBorder(.white.opacity(0.2), lineWidth: 0.5))
                 }
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.7))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(video.title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                        .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
+                    HStack(spacing: 4) {
+                        if !video.channelTitle.isEmpty {
+                            Text(video.channelTitle).lineLimit(1)
+                        }
+                        if let views = video.viewCount, !video.channelTitle.isEmpty {
+                            Text("\u{00B7}")
+                            Text(views).lineLimit(1)
+                        } else if let views = video.viewCount {
+                            Text(views).lineLimit(1)
+                        }
+                        if let pub = video.publishedText {
+                            Text("\u{00B7}")
+                            Text(pub).lineLimit(1)
+                        }
+                    }
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.7))
+                }
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 7)
