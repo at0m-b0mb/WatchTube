@@ -45,13 +45,14 @@ It stays **fully keyless by default**. When YouTube bot‑gates a video, an **op
 </table>
 
 <p align="center">
-  <img src="docs/screenshots/home.png" width="158" alt="Home"/>
-  <img src="docs/screenshots/search.png" width="158" alt="Search"/>
-  <img src="docs/screenshots/library.png" width="158" alt="Library"/>
-  <img src="docs/screenshots/player.png" width="158" alt="Player"/>
-  <img src="docs/screenshots/settings.png" width="158" alt="Settings"/>
+  <img src="docs/screenshots/home.png" width="132" alt="Home"/>
+  <img src="docs/screenshots/search.png" width="132" alt="Search"/>
+  <img src="docs/screenshots/shorts.png" width="132" alt="Shorts"/>
+  <img src="docs/screenshots/library.png" width="132" alt="Library"/>
+  <img src="docs/screenshots/player.png" width="132" alt="Player"/>
+  <img src="docs/screenshots/settings.png" width="132" alt="Settings"/>
 </p>
-<p align="center"><sub><b>Home · Search · Library · Player · Settings</b> — on the Apple Watch Ultra</sub></p>
+<p align="center"><sub><b>Home · Search · Shorts · Library · Player · Settings</b> — on the Apple Watch Ultra</sub></p>
 
 ---
 
